@@ -290,6 +290,8 @@ class XAIResponsesClient:
             response_format = "url"
 
         aspect_ratio = str(arguments.get("aspect_ratio", "")).strip() or options.imagine_aspect_ratio
+        if isinstance(aspect_ratio, str) and aspect_ratio.lower() == "auto":
+            aspect_ratio = None
 
         source_image_url = str(arguments.get("source_image_url", "")).strip() or options.imagine_source_image_url
         if not source_image_url and options.imagine_use_last_image:

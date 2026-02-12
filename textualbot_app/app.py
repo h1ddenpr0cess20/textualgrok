@@ -68,6 +68,7 @@ class UISettings:
 
 class SettingsScreen(ModalScreen[Optional[UISettings]]):
     VALID_IMAGE_ASPECT_RATIOS: tuple[str, ...] = (
+        "auto",
         "1:1",
         "16:9",
         "9:16",
@@ -155,8 +156,8 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
             if self.initial.image_aspect_ratio_raw in self.VALID_IMAGE_ASPECT_RATIOS
             else "1:1"
         )
-        aspect_ratio_options = [
-            (ratio, ratio) for ratio in self.VALID_IMAGE_ASPECT_RATIOS
+        aspect_ratio_options = [("auto (model default)", "auto")] + [
+            (ratio, ratio) for ratio in self.VALID_IMAGE_ASPECT_RATIOS if ratio != "auto"
         ]
         with Vertical(id="settings-dialog"):
             yield Static("Settings", id="settings-title")

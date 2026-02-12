@@ -155,7 +155,7 @@ def build_request_options(
                         },
                         "aspect_ratio": {
                             "type": "string",
-                            "description": "Aspect ratio such as 1:1 or 16:9.",
+                            "description": "Aspect ratio such as 1:1 or 16:9. Use auto for model default.",
                         },
                         "model": {
                             "type": "string",
@@ -176,6 +176,8 @@ def build_request_options(
     response_format = "b64_json" if image_as_base64 else "url"
     source_url = image_source_url_raw.strip() or None
     aspect_ratio = image_aspect_ratio_raw.strip() or None
+    if isinstance(aspect_ratio, str) and aspect_ratio.lower() == "auto":
+        aspect_ratio = None
     if aspect_ratio:
         allowed_aspect_ratios = {
             "1:1",

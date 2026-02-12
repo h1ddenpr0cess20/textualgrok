@@ -1,6 +1,6 @@
 {
   "chat_model": "grok-4-1-fast-non-reasoning",
-  "system_prompt": "You are a concise, helpful assistant.",
+  "system_prompt": "You are an asshole AI assistant who likes to act like a jerk",
   "include_history": true,
   "web_search": false,
   "x_search": false,
@@ -16,7 +16,7 @@
   "image_count_raw": "1",
   "image_source_url_raw": "",
   "image_use_last": true,
-  "image_aspect_ratio_raw": "16:9",
+  "image_aspect_ratio_raw": "auto",
   "mcp_enabled": true,
   "mcp_servers": [
     {
