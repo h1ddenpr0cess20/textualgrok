@@ -1,6 +1,7 @@
 import httpx
 import json
 import re
+import time
 
 from textualbot_app.models import ChatMessage, ChatResult
 from textualbot_app.options import RequestOptions
@@ -74,6 +75,8 @@ class XAIResponsesClient:
 
         aggregated_image_urls: list[str] = []
         aggregated_image_b64: list[str] = []
+        tool_errors: list[str] = []
+        attempted_image_tool = False
         working_last_image_url = last_image_url
         max_tool_loops = 8
 
@@ -90,18 +93,10 @@ class XAIResponsesClient:
 
                 name = call.get("name")
                 arguments_raw = call.get("arguments")
-                arguments: dict = {}
-                if isinstance(arguments_raw, str) and arguments_raw.strip():
-                    try:
-                        parsed = json.loads(arguments_raw)
-                        if isinstance(parsed, dict):
-                            arguments = parsed
-                    except json.JSONDecodeError:
-                        arguments = {}
-                elif isinstance(arguments_raw, dict):
-                    arguments = arguments_raw
+                arguments = self._parse_function_arguments(arguments_raw)
 
                 if name == "generate_image":
+                    attempted_image_tool = True
                     tool_result = self._execute_generate_image_tool(
                         arguments=arguments,
                         options=options,
@@ -119,6 +114,11 @@ class XAIResponsesClient:
                         for b64_data in generated_b64:
                             if isinstance(b64_data, str) and b64_data:
                                 aggregated_image_b64.append(b64_data)
+                    error_message = tool_result.get("error")
+                    if isinstance(error_message, str) and error_message.strip():
+                        tool_errors.append(error_message.strip())
+                    elif not generated_urls and not generated_b64:
+                        tool_errors.append("Image tool returned no image data.")
                     output_text = json.dumps(tool_result)
                 else:
                     output_text = json.dumps({"error": f"Unsupported tool: {name}"})
@@ -189,6 +189,17 @@ class XAIResponsesClient:
 
         if (not text or text == "(No text returned.)") and aggregated_image_urls:
             text = "Generated image(s):\n" + "\n".join(aggregated_image_urls)
+        if (not text or text == "(No text returned.)") and attempted_image_tool:
+            if tool_errors:
+                unique_errors: list[str] = []
+                for error in tool_errors:
+                    if error not in unique_errors:
+                        unique_errors.append(error)
+                text = "Image generation failed or produced no content:\n" + "\n".join(
+                    f"- {error}" for error in unique_errors
+                )
+            else:
+                text = "Image generation returned no assistant text or image output."
         citations = self._extract_citations(data)
         if citations:
             text = f"{text}\n\nCitations:\n" + "\n".join(f"- {url}" for url in citations)
@@ -208,7 +219,13 @@ class XAIResponsesClient:
             source_image_url=source_image_url,
             aspect_ratio=options.imagine_aspect_ratio,
         )
-        data = self._post_json("/images/generations", payload, "xAI image API")
+        data = self._post_json(
+            "/images/generations",
+            payload,
+            "xAI image API",
+            timeout=180.0,
+            retries=1,
+        )
         return ChatResult(
             text=self._extract_image_text(data),
             response_id=data.get("id") if isinstance(data.get("id"), str) else None,
@@ -286,7 +303,22 @@ class XAIResponsesClient:
             source_image_url=source_image_url,
             aspect_ratio=aspect_ratio,
         )
-        data = self._post_json("/images/generations", payload, "xAI image API")
+        try:
+            data = self._post_json(
+                "/images/generations",
+                payload,
+                "xAI image API",
+                timeout=180.0,
+                retries=1,
+            )
+        except RuntimeError as exc:
+            return {
+                "images": [],
+                "images_b64": [],
+                "revised_prompt": None,
+                "count": 0,
+                "error": str(exc),
+            }
         image_urls = self._extract_image_urls(data)
         image_b64 = self._extract_image_b64(data)
         return {
@@ -296,45 +328,177 @@ class XAIResponsesClient:
             "count": len(image_urls) + len(image_b64),
         }
 
-    def _post_json(self, endpoint: str, payload: dict, label: str) -> dict:
-        try:
-            response = self._http.post(endpoint, json=payload)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise RuntimeError(self._build_api_error(exc)) from exc
-        except httpx.RequestError as exc:
-            raise RuntimeError(f"Network error calling {label}: {exc}") from exc
+    def _post_json(
+        self,
+        endpoint: str,
+        payload: dict,
+        label: str,
+        *,
+        timeout: float | None = None,
+        retries: int = 0,
+    ) -> dict:
+        last_request_error: httpx.RequestError | None = None
+        for attempt in range(retries + 1):
+            try:
+                response = self._http.post(endpoint, json=payload, timeout=timeout)
+                response.raise_for_status()
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise RuntimeError(f"Unexpected {label} response format.")
+                return data
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                retryable_status = {408, 429, 500, 502, 503, 504}
+                if attempt < retries and status in retryable_status:
+                    time.sleep(min(2.0, 0.5 * (attempt + 1)))
+                    continue
+                raise RuntimeError(self._build_api_error(exc)) from exc
+            except httpx.RequestError as exc:
+                last_request_error = exc
+                if attempt < retries:
+                    time.sleep(min(2.0, 0.5 * (attempt + 1)))
+                    continue
+                raise RuntimeError(f"Network error calling {label}: {exc}") from exc
 
-        data = response.json()
-        if not isinstance(data, dict):
-            raise RuntimeError(f"Unexpected {label} response format.")
-        return data
+        if last_request_error is not None:
+            raise RuntimeError(f"Network error calling {label}: {last_request_error}")
+        raise RuntimeError(f"Unknown error calling {label}.")
 
     @staticmethod
     def _extract_function_calls(data: dict) -> list[dict]:
-        output = data.get("output")
-        if not isinstance(output, list):
-            return []
-
         calls: list[dict] = []
-        for item in output:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") != "function_call":
-                continue
-            call = {
-                "call_id": item.get("call_id"),
-                "name": item.get("name"),
-                "arguments": item.get("arguments"),
-            }
-            if not call["name"] and isinstance(item.get("function_call"), dict):
-                nested = item["function_call"]
-                call["name"] = nested.get("name")
-                call["arguments"] = nested.get("arguments")
-            if not call["call_id"] and isinstance(item.get("id"), str):
-                call["call_id"] = item["id"]
-            calls.append(call)
+        seen: set[tuple[str, str, str]] = set()
+
+        def normalize_call_id(value: object) -> str | None:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            return None
+
+        def append_call(call_id: object, name: object, arguments: object) -> None:
+            normalized_call_id = normalize_call_id(call_id)
+            normalized_name = name.strip() if isinstance(name, str) else ""
+            if not normalized_call_id or not normalized_name:
+                return
+
+            if isinstance(arguments, str):
+                signature = arguments
+            elif isinstance(arguments, dict):
+                try:
+                    signature = json.dumps(arguments, sort_keys=True)
+                except TypeError:
+                    signature = str(arguments)
+            else:
+                signature = ""
+
+            key = (normalized_call_id, normalized_name, signature)
+            if key in seen:
+                return
+            seen.add(key)
+            calls.append(
+                {
+                    "call_id": normalized_call_id,
+                    "name": normalized_name,
+                    "arguments": arguments,
+                }
+            )
+
+        def scan(node: object, inherited_call_id: str | None = None) -> None:
+            if isinstance(node, list):
+                for item in node:
+                    scan(item, inherited_call_id)
+                return
+
+            if not isinstance(node, dict):
+                return
+
+            local_call_id = (
+                normalize_call_id(node.get("call_id"))
+                or normalize_call_id(node.get("tool_call_id"))
+                or normalize_call_id(node.get("id"))
+                or inherited_call_id
+            )
+            node_type = str(node.get("type", "")).strip().lower()
+            node_name = node.get("name")
+            node_arguments = node.get("arguments")
+
+            if node_type in {"function_call", "tool_call"}:
+                append_call(local_call_id, node_name, node_arguments)
+
+            if isinstance(node.get("function_call"), dict):
+                nested = node["function_call"]
+                append_call(
+                    nested.get("call_id") or nested.get("id") or local_call_id,
+                    nested.get("name") or node_name,
+                    nested.get("arguments") if "arguments" in nested else node_arguments,
+                )
+
+            if isinstance(node.get("function"), dict):
+                nested = node["function"]
+                append_call(
+                    nested.get("call_id") or nested.get("id") or local_call_id,
+                    nested.get("name") or node_name,
+                    nested.get("arguments") if "arguments" in nested else node_arguments,
+                )
+
+            tool_calls = node.get("tool_calls")
+            if isinstance(tool_calls, list):
+                for tool_call in tool_calls:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    function_block = tool_call.get("function")
+                    if isinstance(function_block, dict):
+                        append_call(
+                            tool_call.get("id") or tool_call.get("call_id") or local_call_id,
+                            function_block.get("name"),
+                            function_block.get("arguments"),
+                        )
+                    else:
+                        append_call(
+                            tool_call.get("id") or tool_call.get("call_id") or local_call_id,
+                            tool_call.get("name"),
+                            tool_call.get("arguments"),
+                        )
+
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    scan(value, local_call_id)
+
+        scan(data)
         return calls
+
+    def _parse_function_arguments(self, arguments_raw: object) -> dict:
+        if isinstance(arguments_raw, dict):
+            return arguments_raw
+
+        if not isinstance(arguments_raw, str):
+            return {}
+
+        cleaned = arguments_raw.strip()
+        if not cleaned:
+            return {}
+
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        repaired = cleaned
+        if repaired.startswith("{") and repaired.endswith("}"):
+            repaired = repaired.replace("\n", " ")
+            repaired = re.sub(r",\s*}", "}", repaired)
+            try:
+                parsed = json.loads(repaired)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
+        parsed_body = self._parse_render_body(cleaned)
+        if isinstance(parsed_body, dict) and parsed_body:
+            return parsed_body
+        return {}
 
     @staticmethod
     def _build_api_error(exc: httpx.HTTPStatusError) -> str:
@@ -475,6 +639,11 @@ class XAIResponsesClient:
         entries: list[dict[str, str]] = []
 
         def append_entry(node: object) -> None:
+            if isinstance(node, list):
+                for item in node:
+                    append_entry(item)
+                return
+
             if not isinstance(node, dict):
                 return
 
@@ -497,6 +666,36 @@ class XAIResponsesClient:
                     entry["revised_prompt"] = revised_prompt
                 entries.append(entry)
 
+            nested_images = node.get("images")
+            if isinstance(nested_images, list):
+                for image_item in nested_images:
+                    append_entry(image_item)
+            elif isinstance(nested_images, dict):
+                append_entry(nested_images)
+
+            result_block = node.get("result")
+            if isinstance(result_block, (dict, list)):
+                append_entry(result_block)
+
+            output_block = node.get("output")
+            if isinstance(output_block, (dict, list)):
+                append_entry(output_block)
+
+            data_block = node.get("data")
+            if isinstance(data_block, dict):
+                append_entry(data_block)
+            elif isinstance(data_block, list):
+                append_entry(data_block)
+
+            image_block = node.get("image")
+            if isinstance(image_block, dict):
+                append_entry(image_block)
+            elif isinstance(image_block, str) and image_block:
+                if image_block.startswith("http://") or image_block.startswith("https://"):
+                    entries.append({"url": image_block})
+                else:
+                    entries.append({"b64_json": image_block})
+
         image_data = data.get("data")
         if isinstance(image_data, list):
             for item in image_data:
@@ -505,12 +704,6 @@ class XAIResponsesClient:
             append_entry(image_data)
 
         append_entry(data)
-
-        top_level_image = data.get("image")
-        if isinstance(top_level_image, dict):
-            append_entry(top_level_image)
-        elif isinstance(top_level_image, str) and top_level_image:
-            entries.append({"b64_json": top_level_image})
 
         unique: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
@@ -617,6 +810,7 @@ class XAIResponsesClient:
             )
             urls = tool_result.get("images", [])
             b64_images = tool_result.get("images_b64", [])
+            error_message = tool_result.get("error")
             if isinstance(urls, list):
                 for url in urls:
                     if isinstance(url, str) and url:
@@ -629,7 +823,10 @@ class XAIResponsesClient:
                         generated_b64.append(b64_data)
 
             replacement_text = "Generated image:\n"
-            if urls:
+            if isinstance(error_message, str) and error_message.strip():
+                replacement_text = "Image generation failed:\n"
+                replacement_text += f"- {error_message.strip()}"
+            elif urls:
                 replacement_text += "\n".join(f"- {url}" for url in urls if isinstance(url, str))
             elif b64_images:
                 replacement_text += "- base64 image returned"

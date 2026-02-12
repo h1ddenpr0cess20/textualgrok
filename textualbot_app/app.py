@@ -2,6 +2,7 @@ from dataclasses import asdict, dataclass, field
 import base64
 from datetime import datetime
 import json
+import textwrap
 from typing import Any, Optional
 import tempfile
 from pathlib import Path
@@ -10,11 +11,12 @@ import re
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Footer,
@@ -65,6 +67,22 @@ class UISettings:
 
 
 class SettingsScreen(ModalScreen[Optional[UISettings]]):
+    VALID_IMAGE_ASPECT_RATIOS: tuple[str, ...] = (
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "3:2",
+        "2:3",
+        "2:1",
+        "1:2",
+        "19.5:9",
+        "9:19.5",
+        "20:9",
+        "9:20",
+    )
+
     CSS = """
     SettingsScreen {
         align: center middle;
@@ -132,6 +150,14 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
         ]
 
     def compose(self) -> ComposeResult:
+        selected_aspect_ratio = (
+            self.initial.image_aspect_ratio_raw
+            if self.initial.image_aspect_ratio_raw in self.VALID_IMAGE_ASPECT_RATIOS
+            else "1:1"
+        )
+        aspect_ratio_options = [
+            (ratio, ratio) for ratio in self.VALID_IMAGE_ASPECT_RATIOS
+        ]
         with Vertical(id="settings-dialog"):
             yield Static("Settings", id="settings-title")
             with TabbedContent(id="settings-tabs"):
@@ -222,10 +248,12 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
                         id="input-image-count",
                         classes="settings-input",
                     )
-                    yield Label("Aspect Ratio (e.g. 1:1, 16:9)")
-                    yield Input(
-                        value=self.initial.image_aspect_ratio_raw,
-                        id="input-image-aspect-ratio",
+                    yield Label("Aspect Ratio")
+                    yield Select(
+                        aspect_ratio_options,
+                        value=selected_aspect_ratio,
+                        allow_blank=False,
+                        id="select-image-aspect-ratio",
                         classes="settings-input",
                     )
                     yield Label("Source Image URL (optional, for edits)")
@@ -634,6 +662,15 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
         if not image_model:
             raise ValueError("Image model cannot be empty.")
 
+        image_aspect_ratio_value = self.query_one("#select-image-aspect-ratio", Select).value
+        image_aspect_ratio = (
+            image_aspect_ratio_value.strip()
+            if isinstance(image_aspect_ratio_value, str)
+            else ""
+        )
+        if not image_aspect_ratio:
+            raise ValueError("Image aspect ratio cannot be empty.")
+
         return UISettings(
             chat_model=model_value,
             system_prompt=system_prompt,
@@ -652,7 +689,7 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
             image_count_raw=self.query_one("#input-image-count", Input).value,
             image_source_url_raw=self.query_one("#input-image-source-url", Input).value,
             image_use_last=self.query_one("#switch-image-use-last", Switch).value,
-            image_aspect_ratio_raw=self.query_one("#input-image-aspect-ratio", Input).value,
+            image_aspect_ratio_raw=image_aspect_ratio,
             mcp_enabled=self.query_one("#switch-mcp-enabled", Switch).value,
             mcp_servers=[self._copy_mcp_server_config(server) for server in self._mcp_servers],
         )
@@ -677,7 +714,7 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
         self.query_one("#input-image-model", Select).disabled = not image_generation_enabled
         self.query_one("#input-image-count", Input).disabled = not image_generation_enabled
         self.query_one("#input-image-source-url", Input).disabled = not image_generation_enabled
-        self.query_one("#input-image-aspect-ratio", Input).disabled = not image_generation_enabled
+        self.query_one("#select-image-aspect-ratio", Select).disabled = not image_generation_enabled
 
         self.query_one("#input-mcp-label", Input).disabled = False
         self.query_one("#input-mcp-url", Input).disabled = False
@@ -688,6 +725,160 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
         self.query_one("#btn-mcp-add", Button).disabled = False
         self.query_one("#btn-mcp-remove", Button).disabled = len(self._mcp_servers) == 0
         self.query_one("#select-mcp-servers", Select).disabled = len(self._mcp_servers) == 0
+
+
+@dataclass
+class SessionImageItem:
+    path: Path
+    source: str
+
+
+class ImageGalleryScreen(Screen[None]):
+    CSS = """
+    ImageGalleryScreen {
+        layout: vertical;
+        background: $background;
+        overflow-x: hidden;
+        overflow-y: hidden;
+    }
+
+    #gallery-dialog {
+        width: 100%;
+        height: 100%;
+        background: $panel;
+        padding: 1 2;
+        overflow-x: hidden;
+        overflow-y: hidden;
+    }
+
+    #gallery-header {
+        height: auto;
+        align: left middle;
+        margin-bottom: 1;
+    }
+
+    #gallery-counter {
+        text-style: bold;
+    }
+
+    #gallery-image {
+        width: 100%;
+        height: 1fr;
+        overflow-x: hidden;
+        overflow-y: hidden;
+    }
+
+    #gallery-source {
+        height: 2;
+        color: $text-muted;
+        margin-top: 1;
+        overflow-x: hidden;
+        overflow-y: hidden;
+    }
+
+    #gallery-actions {
+        height: auto;
+        margin-top: 1;
+        align: center middle;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("left", "prev_image", "Prev"),
+        Binding("right", "next_image", "Next"),
+    ]
+
+    def __init__(self, images: list[SessionImageItem], index: int) -> None:
+        super().__init__()
+        self.images = images
+        self.index = max(0, min(index, len(images) - 1)) if images else 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="gallery-dialog"):
+            with Horizontal(id="gallery-header"):
+                yield Static("", id="gallery-counter")
+            yield TextualImageWidget(id="gallery-image")
+            yield Static("", id="gallery-source")
+            with Horizontal(id="gallery-actions"):
+                yield Button("Prev", id="gallery-prev-btn")
+                yield Button("Next", id="gallery-next-btn")
+                yield Button("Save", id="gallery-save-btn", variant="primary")
+                yield Button("Close", id="gallery-close-btn")
+
+    def on_mount(self) -> None:
+        self._refresh_gallery()
+
+    def action_close(self) -> None:
+        self.dismiss()
+
+    def action_prev_image(self) -> None:
+        if self.index <= 0:
+            return
+        self.index -= 1
+        self._refresh_gallery()
+
+    def action_next_image(self) -> None:
+        if self.index >= len(self.images) - 1:
+            return
+        self.index += 1
+        self._refresh_gallery()
+
+    @on(Button.Pressed, "#gallery-prev-btn")
+    def on_prev_pressed(self, _: Button.Pressed) -> None:
+        self.action_prev_image()
+
+    @on(Button.Pressed, "#gallery-next-btn")
+    def on_next_pressed(self, _: Button.Pressed) -> None:
+        self.action_next_image()
+
+    @on(Button.Pressed, "#gallery-save-btn")
+    def on_save_pressed(self, _: Button.Pressed) -> None:
+        if not self.images:
+            return
+        app = self.app
+        if not hasattr(app, "save_image_item"):
+            return
+        current = self.images[self.index]
+        try:
+            destination = app.save_image_item(current)  # type: ignore[attr-defined]
+        except RuntimeError as exc:
+            self.query_one("#gallery-source", Static).update(self._format_source_text(str(exc)))
+            return
+        self.query_one("#gallery-source", Static).update(
+            self._format_source_text(f"{current.source}\nSaved: {destination}")
+        )
+
+    @on(Button.Pressed, "#gallery-close-btn")
+    def on_close_pressed(self, _: Button.Pressed) -> None:
+        self.dismiss()
+
+    def _refresh_gallery(self) -> None:
+        if not self.images:
+            self.dismiss()
+            return
+
+        current = self.images[self.index]
+        image_widget = self.query_one("#gallery-image", TextualImageWidget)
+        image_widget.image = current.path
+        self.query_one("#gallery-counter", Static).update(f"Image {self.index + 1} / {len(self.images)}")
+        self.query_one("#gallery-source", Static).update(self._format_source_text(current.source))
+        self.query_one("#gallery-prev-btn", Button).disabled = self.index <= 0
+        self.query_one("#gallery-next-btn", Button).disabled = self.index >= len(self.images) - 1
+
+    @staticmethod
+    def _format_source_text(value: str) -> str:
+        wrapped_lines: list[str] = []
+        for line in value.splitlines():
+            parts = textwrap.wrap(line, width=72, break_long_words=True, break_on_hyphens=False)
+            wrapped_lines.extend(parts or [""])
+        if len(wrapped_lines) > 2:
+            wrapped_lines = wrapped_lines[:2]
+            if len(wrapped_lines[1]) >= 3:
+                wrapped_lines[1] = f"{wrapped_lines[1][:-3]}..."
+            else:
+                wrapped_lines[1] = "..."
+        return "\n".join(wrapped_lines)
 
 
 class ChatApp(App[None]):
@@ -708,13 +899,13 @@ class ChatApp(App[None]):
     }
 
     #chat-log {
-        height: 1fr;
+        height: 2fr;
         border: round $accent;
         padding: 1;
     }
 
     #image-panel {
-        height: auto;
+        height: 1fr;
         border: round $secondary;
         margin-top: 1;
         padding: 1;
@@ -724,13 +915,45 @@ class ChatApp(App[None]):
         display: none;
     }
 
-    #image-preview-widget {
-        width: auto;
-        height: 18;
+    #image-panel-title {
+        text-style: bold;
+        margin-bottom: 1;
     }
 
-    #image-preview-url {
-        height: 1;
+    #image-grid-scroll {
+        height: 1fr;
+    }
+
+    #image-grid {
+        layout: grid;
+        grid-size: 1;
+        grid-gutter: 1 1;
+        height: auto;
+    }
+
+    .image-tile {
+        border: round $secondary;
+        padding: 0 1;
+        height: auto;
+    }
+
+    .image-thumb {
+        width: auto;
+        height: 6;
+    }
+
+    .image-caption {
+        height: auto;
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    .image-open-btn {
+        width: 100%;
+        margin-top: 1;
+    }
+
+    #image-grid-empty {
         color: $text-muted;
     }
 
@@ -779,7 +1002,9 @@ class ChatApp(App[None]):
         self.pending_input: Optional[list[ChatMessage]] = None
         self.pending_options: Optional[RequestOptions] = None
         self.last_image_url: Optional[str] = None
-        self._temp_image_path: Optional[Path] = None
+        self._session_images: list[SessionImageItem] = []
+        self._temp_image_paths: list[Path] = []
+        self._gallery_open = False
         self._transcript_lines: list[str] = []
         self._prompt_history: list[str] = []
         self._prompt_history_index: Optional[int] = None
@@ -794,10 +1019,10 @@ class ChatApp(App[None]):
                 yield Button("Save Chat", id="save-chat-btn")
             yield RichLog(id="chat-log", auto_scroll=True, wrap=True, highlight=False, markup=False)
             with Vertical(id="image-panel", classes="hidden"):
-                yield Static("Latest Generated Image", id="image-preview-title")
-                yield TextualImageWidget(id="image-preview-widget")
-                yield Static("", id="image-preview-url")
-                yield Button("Save Image", id="save-image-link", variant="default", disabled=True)
+                yield Static("Session Images", id="image-panel-title")
+                with VerticalScroll(id="image-grid-scroll"):
+                    with Vertical(id="image-grid"):
+                        yield Static("No images generated yet.", id="image-grid-empty")
             yield Static("Ready. Click Settings to configure tools and model.", id="status")
         with Horizontal(id="prompt-row"):
             yield TextArea(
@@ -815,10 +1040,14 @@ class ChatApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#prompt", TextArea).focus()
+        self._update_image_grid_columns()
 
     def on_unmount(self) -> None:
-        self._cleanup_temp_image()
+        self._cleanup_temp_images()
         self.client.close()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._update_image_grid_columns(event.size.width)
 
     @on(Button.Pressed, "#open-settings-btn")
     def on_open_settings_clicked(self, _: Button.Pressed) -> None:
@@ -839,11 +1068,9 @@ class ChatApp(App[None]):
         self.query_one(RichLog).clear()
         self._transcript_lines.clear()
         self.last_image_url = None
-        self._cleanup_temp_image()
-        panel = self.query_one("#image-panel", Vertical)
-        panel.add_class("hidden")
-        self.query_one("#image-preview-url", Static).update("")
-        self.query_one("#save-image-link", Button).disabled = True
+        self._session_images.clear()
+        self._cleanup_temp_images()
+        self._refresh_image_grid()
         self._set_status("Chat log and conversation history cleared.")
         self.query_one("#prompt", TextArea).focus()
 
@@ -859,18 +1086,28 @@ class ChatApp(App[None]):
         destination.write_text("\n\n".join(self._transcript_lines).strip() + "\n", encoding="utf-8")
         self._set_status(f"Saved chat: {destination}")
 
-    @on(Button.Pressed, "#save-image-link")
-    def on_save_image_clicked(self, _: Button.Pressed) -> None:
-        try:
-            destination = self._save_latest_image()
-        except RuntimeError as exc:
-            self._set_status(str(exc))
-            return
-        self._set_status(f"Saved image: {destination}")
-
     @on(Button.Pressed, "#send-btn")
     def on_send_clicked(self, _: Button.Pressed) -> None:
         self._submit_prompt_from_ui()
+
+    def on_click(self, event: events.Click) -> None:
+        if self._gallery_open:
+            return
+        index = self._resolve_image_index_from_click(event)
+        if index is None:
+            return
+        self._open_image_gallery(index)
+
+    @on(Button.Pressed, ".image-open-btn")
+    def on_image_open_button_pressed(self, event: Button.Pressed) -> None:
+        if self._gallery_open:
+            return
+        index = getattr(event.button, "_image_index", None)
+        if not isinstance(index, int):
+            return
+        if index is None:
+            return
+        self._open_image_gallery(index)
 
     def action_send_prompt(self) -> None:
         prompt_widget = self.query_one("#prompt", TextArea)
@@ -973,15 +1210,27 @@ class ChatApp(App[None]):
         if event.state != WorkerState.SUCCESS and event.state != WorkerState.ERROR:
             return
 
-        if event.worker.name == "load-image-preview":
+        if event.worker.name == "load-session-images":
             if event.state == WorkerState.SUCCESS:
-                image_path = event.worker.result
-                if isinstance(image_path, Path):
-                    image_widget = self.query_one("#image-preview-widget", TextualImageWidget)
-                    image_widget.image = image_path
-                    image_widget.refresh(layout=True, repaint=True)
+                payload = event.worker.result
+                if (
+                    isinstance(payload, tuple)
+                    and len(payload) == 2
+                    and isinstance(payload[0], list)
+                    and isinstance(payload[1], list)
+                ):
+                    images = payload[0]
+                    errors = payload[1]
+                    for item in images:
+                        if isinstance(item, SessionImageItem):
+                            self._session_images.append(item)
+                    self._refresh_image_grid()
+                    if errors:
+                        for error in errors:
+                            self._log_error(error)
+                        self._set_status("Ready (some images failed to render).")
             else:
-                self._log_error(f"Image preview failed: {event.worker.error}")
+                self._log_error(f"Image load failed: {event.worker.error}")
             return
 
         if event.worker.name != "ask":
@@ -1001,9 +1250,13 @@ class ChatApp(App[None]):
                 self.conversation.commit_turn(self.pending_prompt, result.text)
             if result.image_urls:
                 self.last_image_url = result.image_urls[0]
-                self._show_image_preview_from_url(self.last_image_url)
-            elif result.image_b64:
-                self._show_image_preview_from_b64(result.image_b64[0])
+            if result.image_urls or result.image_b64:
+                self.run_worker(
+                    lambda: self._materialize_session_images(result),
+                    thread=True,
+                    exclusive=False,
+                    name="load-session-images",
+                )
             self._log_assistant(result.text)
             self._set_status("Ready.")
         else:
@@ -1020,55 +1273,141 @@ class ChatApp(App[None]):
         lines = text.splitlines() or [""]
         prompt_widget.move_cursor((len(lines) - 1, len(lines[-1])))
 
-    def _show_image_preview_from_url(self, image_url: str) -> None:
-        panel = self.query_one("#image-panel", Vertical)
-        panel.remove_class("hidden")
-        self.query_one("#image-preview-url", Static).update(image_url)
-        self.query_one("#save-image-link", Button).disabled = False
+    def _materialize_session_images(
+        self,
+        result: ChatResult,
+    ) -> tuple[list[SessionImageItem], list[str]]:
+        images: list[SessionImageItem] = []
+        errors: list[str] = []
 
-        self.run_worker(
-            lambda: self._download_image_to_tempfile(image_url),
-            thread=True,
-            exclusive=True,
-            name="load-image-preview",
-        )
+        urls = result.image_urls or []
+        for image_url in urls:
+            try:
+                image_bytes = self.client.fetch_bytes(image_url)
+                suffix = self._guess_image_suffix_from_url(image_url)
+                image_path = self._write_temp_image_bytes(image_bytes, suffix=suffix)
+                images.append(SessionImageItem(path=image_path, source=image_url))
+            except Exception as exc:
+                errors.append(f"Failed to load image URL {image_url}: {exc}")
 
-    def _show_image_preview_from_b64(self, image_b64: str) -> None:
-        panel = self.query_one("#image-panel", Vertical)
-        panel.remove_class("hidden")
-        self.query_one("#image-preview-url", Static).update("(embedded base64 image)")
-        self.query_one("#save-image-link", Button).disabled = False
+        base64_images = result.image_b64 or []
+        for index, image_b64 in enumerate(base64_images, start=1):
+            try:
+                image_bytes = base64.b64decode(image_b64, validate=True)
+                image_path = self._write_temp_image_bytes(image_bytes, suffix=".png")
+                images.append(
+                    SessionImageItem(
+                        path=image_path,
+                        source=f"(embedded base64 image {index})",
+                    )
+                )
+            except Exception as exc:
+                errors.append(f"Failed to decode base64 image {index}: {exc}")
 
-        self.run_worker(
-            lambda: self._write_b64_image_to_tempfile(image_b64),
-            thread=True,
-            exclusive=True,
-            name="load-image-preview",
-        )
+        return images, errors
 
-    def _download_image_to_tempfile(self, image_url: str) -> Path:
-        image_bytes = self.client.fetch_bytes(image_url)
-
-        self._cleanup_temp_image()
-        suffix = self._guess_image_suffix_from_url(image_url)
+    def _write_temp_image_bytes(self, image_bytes: bytes, *, suffix: str) -> Path:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
             temp.write(image_bytes)
             path = Path(temp.name)
-        self._temp_image_path = path
+        self._temp_image_paths.append(path)
         return path
 
-    def _write_b64_image_to_tempfile(self, image_b64: str) -> Path:
+    def _refresh_image_grid(self) -> None:
+        panel = self.query_one("#image-panel", Vertical)
+        grid = self.query_one("#image-grid", Vertical)
+        self._update_image_grid_columns()
+
+        grid.remove_children()
+
+        if not self._session_images:
+            panel.add_class("hidden")
+            grid.mount(Static("No images generated yet.", id="image-grid-empty"))
+            return
+
+        panel.remove_class("hidden")
+        for index, item in enumerate(self._session_images):
+            thumb = TextualImageWidget(
+                classes="image-thumb",
+            )
+            thumb.image = item.path
+            setattr(thumb, "_image_index", index)
+            caption_source = item.source
+            if len(caption_source) > 42:
+                caption_source = f"{caption_source[:39]}..."
+            caption = Static(
+                f"{index + 1}. Click image to open\n{caption_source}",
+                classes="image-caption",
+            )
+            setattr(caption, "_image_index", index)
+            open_button = Button(
+                "Open",
+                classes="image-open-btn",
+            )
+            setattr(open_button, "_image_index", index)
+            tile = Vertical(
+                thumb,
+                caption,
+                open_button,
+                classes="image-tile",
+            )
+            setattr(tile, "_image_index", index)
+            grid.mount(tile)
+
+    def _update_image_grid_columns(self, width: Optional[int] = None) -> None:
         try:
-            image_bytes = base64.b64decode(image_b64, validate=True)
-        except Exception as exc:
-            raise RuntimeError(f"Invalid base64 image data: {exc}") from exc
+            grid = self.query_one("#image-grid", Vertical)
+        except Exception:
+            return
 
-        self._cleanup_temp_image()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp:
-            temp.write(image_bytes)
-            path = Path(temp.name)
-        self._temp_image_path = path
-        return path
+        if width is None:
+            width = self.size.width
+
+        if width < 90:
+            columns = 1
+        elif width < 140:
+            columns = 2
+        elif width < 190:
+            columns = 3
+        else:
+            columns = 4
+
+        grid.styles.grid_size_columns = columns
+
+    def _resolve_image_index_from_click(self, event: events.Click) -> Optional[int]:
+        candidates: list[Widget] = []
+        if isinstance(event.widget, Widget):
+            candidates.append(event.widget)
+
+        control = event.control
+        if isinstance(control, Widget) and control not in candidates:
+            candidates.append(control)
+
+        for node in candidates:
+            current: Optional[Widget] = node
+            while current is not None:
+                image_index = getattr(current, "_image_index", None)
+                if isinstance(image_index, int):
+                    return image_index
+                parent = current.parent
+                current = parent if isinstance(parent, Widget) else None
+        return None
+
+    def _open_image_gallery(self, index: int) -> None:
+        if self._gallery_open:
+            return
+        if index < 0 or index >= len(self._session_images):
+            return
+        self._gallery_open = True
+        self.push_screen(
+            ImageGalleryScreen(images=self._session_images.copy(), index=index),
+            self._on_image_gallery_closed,
+        )
+
+    def _on_image_gallery_closed(self, _: None) -> None:
+        self._gallery_open = False
+        self._refresh_image_grid()
+        self.query_one("#prompt", TextArea).focus()
 
     @staticmethod
     def _guess_image_suffix_from_url(image_url: str) -> str:
@@ -1080,14 +1419,13 @@ class ChatApp(App[None]):
             ext = "jpg"
         return f".{ext}"
 
-    def _cleanup_temp_image(self) -> None:
-        if self._temp_image_path is None:
-            return
-        try:
-            self._temp_image_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        self._temp_image_path = None
+    def _cleanup_temp_images(self) -> None:
+        for image_path in self._temp_image_paths:
+            try:
+                image_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._temp_image_paths.clear()
 
     def _log_user(self, prompt: str) -> None:
         self.query_one(RichLog).write(Text(f"You: {prompt}"))
@@ -1158,20 +1496,16 @@ class ChatApp(App[None]):
         exports_dir.mkdir(parents=True, exist_ok=True)
         return exports_dir
 
-    def _save_latest_image(self) -> Path:
-        exports_dir = self._ensure_exports_dir()
+    def save_image_item(self, image: SessionImageItem) -> Path:
+        exports_dir = self._ensure_exports_dir() / "images"
+        exports_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
-        if self._temp_image_path is not None and self._temp_image_path.exists():
-            suffix = self._temp_image_path.suffix or ".png"
-            destination = exports_dir / f"image-{timestamp}{suffix}"
-            destination.write_bytes(self._temp_image_path.read_bytes())
-            return destination
+        if not image.path.exists():
+            raise RuntimeError("Image file is no longer available.")
 
-        if self.last_image_url:
-            suffix = self._guess_image_suffix_from_url(self.last_image_url)
-            destination = exports_dir / f"image-{timestamp}{suffix}"
-            destination.write_bytes(self.client.fetch_bytes(self.last_image_url))
-            return destination
-
-        raise RuntimeError("No generated image available to save.")
+        suffix = image.path.suffix or ".png"
+        destination = exports_dir / f"image-{timestamp}{suffix}"
+        destination.write_bytes(image.path.read_bytes())
+        self._set_status(f"Saved image: {destination}")
+        return destination

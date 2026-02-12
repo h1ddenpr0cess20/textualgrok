@@ -10,13 +10,13 @@
   "file_search": false,
   "vector_store_ids_raw": "",
   "file_search_max_results_raw": "10",
-  "image_generation": false,
+  "image_generation": true,
   "image_as_base64": false,
   "image_model": "grok-imagine-image",
   "image_count_raw": "1",
   "image_source_url_raw": "",
   "image_use_last": true,
-  "image_aspect_ratio_raw": "1:1",
+  "image_aspect_ratio_raw": "16:9",
   "mcp_enabled": true,
   "mcp_servers": [
     {
