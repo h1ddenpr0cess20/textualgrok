@@ -1,0 +1,27 @@
+{
+  "chat_model": "grok-4-1-fast-non-reasoning",
+  "system_prompt": "You are a concise, helpful assistant.",
+  "include_history": true,
+  "web_search": false,
+  "x_search": false,
+  "x_search_image_understanding": false,
+  "x_search_video_understanding": false,
+  "code_interpreter": true,
+  "file_search": false,
+  "vector_store_ids_raw": "",
+  "file_search_max_results_raw": "10",
+  "image_generation": false,
+  "image_as_base64": false,
+  "image_model": "grok-imagine-image",
+  "image_count_raw": "1",
+  "image_source_url_raw": "",
+  "image_use_last": true,
+  "image_aspect_ratio_raw": "1:1",
+  "mcp_enabled": true,
+  "mcp_servers": [
+    {
+      "server_url": "https://mcp.context7.com/mcp",
+      "server_label": "context7"
+    }
+  ]
+}
