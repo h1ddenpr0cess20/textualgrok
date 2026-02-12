@@ -2,6 +2,7 @@ from dataclasses import asdict, dataclass, field
 import base64
 from datetime import datetime
 import json
+import mimetypes
 import textwrap
 from typing import Any, Optional
 import tempfile
@@ -14,7 +15,7 @@ from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import (
@@ -23,6 +24,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    OptionList,
     RichLog,
     Select,
     Static,
@@ -31,6 +33,7 @@ from textual.widgets import (
     TabbedContent,
     TextArea,
 )
+from textual.widgets.select import InvalidSelectValueError
 from textual.worker import Worker, WorkerState
 
 from textualbot_app.config import AppConfig
@@ -734,6 +737,419 @@ class SessionImageItem:
     source: str
 
 
+@dataclass
+class PendingImageAttachment:
+    label: str
+    image_url: str
+    preview_path: Path | None = None
+
+
+@dataclass
+class BrowseEntry:
+    path: Path
+    kind: str
+    is_image: bool
+
+
+class BrowseImageFileScreen(ModalScreen[Optional[str]]):
+    CSS = """
+    BrowseImageFileScreen {
+        align: center middle;
+    }
+
+    #browse-dialog {
+        width: 94;
+        height: 34;
+        border: round $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+
+    #browse-nav {
+        height: auto;
+        align: left middle;
+        margin-top: 1;
+    }
+
+    #browse-drive-select {
+        width: 14;
+        margin-left: 1;
+    }
+
+    #browse-main {
+        height: 1fr;
+        margin: 1 0;
+    }
+
+    #browse-list {
+        height: 1fr;
+        width: 1fr;
+        border: round $secondary;
+        margin-right: 1;
+    }
+
+    #browse-preview-panel {
+        width: 34;
+        height: 1fr;
+        border: round $secondary;
+        padding: 0 1;
+    }
+
+    #browse-preview-title {
+        height: auto;
+        margin-bottom: 1;
+        text-style: bold;
+    }
+
+    #browse-preview-image {
+        width: auto;
+        height: 8;
+    }
+
+    #browse-preview-path {
+        height: auto;
+        color: $text-muted;
+        margin-top: 1;
+    }
+
+    #browse-selected {
+        height: 2;
+        color: $text-muted;
+    }
+
+    #browse-actions {
+        height: auto;
+        align: right middle;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, start_path: Path | None = None) -> None:
+        super().__init__()
+        self.start_path = (start_path or Path.cwd()).resolve()
+        self._current_dir = self.start_path
+        self._entries: list[BrowseEntry] = []
+        self._selected_path: Optional[Path] = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="browse-dialog"):
+            yield Static("Browse Image File")
+            with Horizontal(id="browse-nav"):
+                yield Button("Home", id="btn-browse-home")
+                yield Button("CWD", id="btn-browse-cwd")
+                yield Select(
+                    [],
+                    allow_blank=True,
+                    id="browse-drive-select",
+                )
+            with Horizontal(id="browse-main"):
+                yield OptionList(id="browse-list")
+                with Vertical(id="browse-preview-panel"):
+                    yield Static("Preview", id="browse-preview-title")
+                    yield TextualImageWidget(id="browse-preview-image")
+                    yield Static("Select an image file.", id="browse-preview-path")
+            yield Static("No file selected.", id="browse-selected")
+            with Horizontal(id="browse-actions"):
+                yield Button("Cancel", id="btn-browse-cancel")
+                yield Button("Use Selected", id="btn-browse-use", variant="primary", disabled=True)
+
+    def on_mount(self) -> None:
+        self._populate_drive_select()
+        self._set_current_directory(self.start_path)
+        self.query_one("#browse-list", OptionList).focus()
+
+    def action_open_highlighted(self) -> None:
+        option_list = self.query_one("#browse-list", OptionList)
+        highlighted = option_list.highlighted
+        if highlighted is None:
+            return
+        self._activate_entry(highlighted)
+
+    @on(Button.Pressed, "#btn-browse-cancel")
+    def on_cancel_clicked(self, _: Button.Pressed) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#btn-browse-home")
+    def on_home_clicked(self, _: Button.Pressed) -> None:
+        self._set_current_directory(Path.home())
+
+    @on(Button.Pressed, "#btn-browse-cwd")
+    def on_cwd_clicked(self, _: Button.Pressed) -> None:
+        self._set_current_directory(Path.cwd())
+
+    @on(Select.Changed, "#browse-drive-select")
+    def on_drive_changed(self, event: Select.Changed) -> None:
+        value = event.value
+        if not isinstance(value, str) or not value:
+            return
+        drive_path = Path(value)
+        if drive_path.exists():
+            self._set_current_directory(drive_path)
+
+    @on(OptionList.OptionHighlighted, "#browse-list")
+    def on_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        self._apply_highlight(event.option_index)
+
+    @on(OptionList.OptionSelected, "#browse-list")
+    def on_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self._activate_entry(event.option_index)
+
+    @on(Button.Pressed, "#btn-browse-use")
+    def on_use_clicked(self, _: Button.Pressed) -> None:
+        if self._selected_path is None:
+            return
+        self.dismiss(str(self._selected_path))
+
+    def _set_current_directory(self, path: Path) -> None:
+        resolved = path.expanduser().resolve()
+        if not resolved.exists():
+            return
+        if resolved.is_file():
+            resolved = resolved.parent
+        if not resolved.is_dir():
+            return
+        self._current_dir = resolved
+        self._selected_path = None
+        self._sync_drive_select_with_path(resolved)
+        self._rebuild_browse_list()
+
+    def _rebuild_browse_list(self) -> None:
+        option_list = self.query_one("#browse-list", OptionList)
+        preview_image = self.query_one("#browse-preview-image", TextualImageWidget)
+        preview_path = self.query_one("#browse-preview-path", Static)
+        use_button = self.query_one("#btn-browse-use", Button)
+        selected_status = self.query_one("#browse-selected", Static)
+
+        self._entries.clear()
+        options: list[str] = []
+
+        parent = self._current_dir.parent
+        if parent != self._current_dir:
+            self._entries.append(BrowseEntry(path=parent, kind="parent", is_image=False))
+            options.append("..")
+
+        try:
+            children = list(self._current_dir.iterdir())
+        except OSError as exc:
+            option_list.set_options([])
+            selected_status.update(f"Cannot open directory: {exc}")
+            preview_image.image = None
+            preview_path.update("Select an image file.")
+            use_button.disabled = True
+            return
+
+        directories = sorted(
+            [item for item in children if item.is_dir()],
+            key=lambda p: p.name.lower(),
+        )
+        files = sorted(
+            [item for item in children if item.is_file()],
+            key=lambda p: p.name.lower(),
+        )
+
+        for directory in directories:
+            self._entries.append(BrowseEntry(path=directory, kind="dir", is_image=False))
+            options.append(f"[DIR] {directory.name}")
+        for file_path in files:
+            is_image = ChatApp.is_likely_image_file(file_path)
+            self._entries.append(BrowseEntry(path=file_path, kind="file", is_image=is_image))
+            marker = "[IMG]" if is_image else "[FILE]"
+            options.append(f"{marker} {file_path.name}")
+
+        option_list.set_options(options)
+        selected_status.update(f"Browsing: {self._current_dir}")
+        preview_image.image = None
+        preview_path.update("Select an image file.")
+        use_button.disabled = True
+
+        if self._entries:
+            option_list.highlighted = 0
+            self._apply_highlight(0)
+
+    def _entry_at_index(self, index: int) -> Optional[BrowseEntry]:
+        if index < 0 or index >= len(self._entries):
+            return None
+        return self._entries[index]
+
+    def _activate_entry(self, index: int) -> None:
+        entry = self._entry_at_index(index)
+        if entry is None:
+            return
+        if entry.kind in {"parent", "dir"}:
+            self._set_current_directory(entry.path)
+            return
+        self._apply_highlight(index)
+
+    def _apply_highlight(self, index: int) -> None:
+        entry = self._entry_at_index(index)
+        if entry is None:
+            return
+
+        preview_image = self.query_one("#browse-preview-image", TextualImageWidget)
+        preview_path = self.query_one("#browse-preview-path", Static)
+        use_button = self.query_one("#btn-browse-use", Button)
+        selected_status = self.query_one("#browse-selected", Static)
+
+        if entry.kind in {"parent", "dir"}:
+            self._selected_path = None
+            preview_image.image = None
+            if entry.kind == "parent":
+                selected_status.update(f"Up to: {entry.path}")
+                preview_path.update("Click .. to go up.")
+            else:
+                selected_status.update(f"Directory: {entry.path}")
+                preview_path.update("Open directory.")
+            use_button.disabled = True
+            return
+
+        if entry.is_image:
+            self._selected_path = entry.path
+            selected_status.update(str(entry.path))
+            preview_image.image = entry.path
+            preview_path.update(str(entry.path))
+            use_button.disabled = False
+            return
+
+        self._selected_path = None
+        selected_status.update(f"Not an image file: {entry.path.name}")
+        preview_image.image = None
+        preview_path.update("Not an image file.")
+        use_button.disabled = True
+
+    def _populate_drive_select(self) -> None:
+        select = self.query_one("#browse-drive-select", Select)
+        drives = self._available_drive_roots()
+        if not drives:
+            select.set_options([("/", "/")])
+            select.value = "/"
+            return
+        options = [(drive, drive) for drive in drives]
+        select.set_options(options)
+        self._sync_drive_select_with_path(self._current_dir)
+
+    def _sync_drive_select_with_path(self, path: Path) -> None:
+        select = self.query_one("#browse-drive-select", Select)
+        value = self._matching_drive_value(path)
+        if value is not None:
+            try:
+                select.value = value
+            except InvalidSelectValueError:
+                # Can happen transiently before options are fully synced.
+                return
+
+    def _matching_drive_value(self, path: Path) -> Optional[str]:
+        path_str = str(path).lower()
+        for drive in self._available_drive_roots():
+            if path_str.startswith(drive.lower()):
+                return drive
+        return None
+
+    @staticmethod
+    def _available_drive_roots() -> list[str]:
+        roots: list[str] = []
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            candidate = Path(f"{letter}:\\")
+            if candidate.exists():
+                roots.append(str(candidate))
+        if roots:
+            return roots
+        root = Path("/").resolve()
+        return [str(root)] if root.exists() else []
+
+
+class AddImageAttachmentScreen(ModalScreen[Optional[str]]):
+    CSS = """
+    AddImageAttachmentScreen {
+        align: center middle;
+    }
+
+    #attach-dialog {
+        width: 88;
+        height: auto;
+        border: round $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+
+    #attach-actions {
+        height: auto;
+        margin-top: 1;
+        align: right middle;
+    }
+
+    #attach-source-row {
+        height: auto;
+        align: left middle;
+    }
+
+    #input-attach-image-source {
+        width: 1fr;
+        margin-right: 1;
+    }
+
+    #attach-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    .settings-input {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="attach-dialog"):
+            yield Static("Attach Image", id="attach-title")
+            yield Label("Image path or URL")
+            with Horizontal(id="attach-source-row"):
+                yield Input(
+                    value="",
+                    placeholder=r"C:\path\to\image.png or https://example.com/image.jpg",
+                    id="input-attach-image-source",
+                    classes="settings-input",
+                )
+                yield Button("Browse...", id="btn-attach-browse")
+            with Horizontal(id="attach-actions"):
+                yield Button("Cancel", id="btn-attach-cancel")
+                yield Button("Attach", id="btn-attach-confirm", variant="primary")
+
+    def on_mount(self) -> None:
+        self.query_one("#input-attach-image-source", Input).focus()
+
+    @on(Button.Pressed, "#btn-attach-cancel")
+    def on_cancel_clicked(self, _: Button.Pressed) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#btn-attach-browse")
+    def on_browse_clicked(self, _: Button.Pressed) -> None:
+        current_value = self.query_one("#input-attach-image-source", Input).value.strip()
+        start_path = Path.cwd()
+        if current_value and not (current_value.startswith("http://") or current_value.startswith("https://")):
+            candidate = Path(current_value).expanduser()
+            if candidate.is_file():
+                start_path = candidate.parent.resolve()
+            elif candidate.is_dir():
+                start_path = candidate.resolve()
+            elif candidate.parent.exists():
+                start_path = candidate.parent.resolve()
+        self.app.push_screen(BrowseImageFileScreen(start_path=start_path), self._on_browse_closed)
+
+    def _on_browse_closed(self, selected_path: Optional[str]) -> None:
+        if not selected_path:
+            self.query_one("#input-attach-image-source", Input).focus()
+            return
+        self.query_one("#input-attach-image-source", Input).value = selected_path
+        self.query_one("#input-attach-image-source", Input).focus()
+
+    @on(Button.Pressed, "#btn-attach-confirm")
+    def on_confirm_clicked(self, _: Button.Pressed) -> None:
+        source = self.query_one("#input-attach-image-source", Input).value.strip()
+        if not source:
+            return
+        self.dismiss(source)
+
+
 class ImageGalleryScreen(Screen[None]):
     CSS = """
     ImageGalleryScreen {
@@ -954,7 +1370,7 @@ class ChatApp(App[None]):
         margin-top: 1;
     }
 
-    #image-grid-empty {
+    .image-grid-empty {
         color: $text-muted;
     }
 
@@ -966,6 +1382,54 @@ class ChatApp(App[None]):
     #prompt-row {
         height: auto;
         margin: 0 1 1 1;
+    }
+
+    #attachments-bar {
+        width: 100%;
+        height: auto;
+        margin: 0 1 1 1;
+        align: left middle;
+    }
+
+    #attachments-status {
+        width: 1fr;
+        height: 1;
+        color: $text-muted;
+    }
+
+    #attachments-actions {
+        width: 1fr;
+        height: auto;
+        align: right middle;
+    }
+
+    #attachments-actions Button {
+        margin-left: 1;
+    }
+
+    #attachments-thumbs {
+        height: 6;
+        margin: 0 1 1 1;
+        border: round $secondary;
+        padding: 0 1;
+    }
+
+    #attachments-thumbs.hidden {
+        display: none;
+    }
+
+    .attachment-thumb {
+        width: auto;
+        height: 4;
+        margin-right: 1;
+    }
+
+    .attachment-url-chip {
+        width: auto;
+        height: auto;
+        margin-right: 1;
+        border: round $secondary;
+        padding: 0 1;
     }
 
     #prompt {
@@ -1000,9 +1464,11 @@ class ChatApp(App[None]):
         )
         self.settings = self._load_ui_settings(default_settings)
         self.pending_prompt: Optional[str] = None
+        self.pending_user_content: Optional[object] = None
         self.pending_input: Optional[list[ChatMessage]] = None
         self.pending_options: Optional[RequestOptions] = None
         self.last_image_url: Optional[str] = None
+        self._pending_image_attachments: list[PendingImageAttachment] = []
         self._session_images: list[SessionImageItem] = []
         self._temp_image_paths: list[Path] = []
         self._gallery_open = False
@@ -1023,8 +1489,15 @@ class ChatApp(App[None]):
                 yield Static("Session Images", id="image-panel-title")
                 with VerticalScroll(id="image-grid-scroll"):
                     with Vertical(id="image-grid"):
-                        yield Static("No images generated yet.", id="image-grid-empty")
+                        yield Static("No images generated yet.", classes="image-grid-empty")
             yield Static("Ready. Click Settings to configure tools and model.", id="status")
+        with Horizontal(id="attachments-bar"):
+            yield Static("Attachments: none", id="attachments-status")
+            with Horizontal(id="attachments-actions"):
+                yield Button("Attach Image", id="attach-image-btn", variant="default")
+                yield Button("Clear Attach", id="clear-attachments-btn", variant="default", disabled=True)
+        with HorizontalScroll(id="attachments-thumbs", classes="hidden"):
+            pass
         with Horizontal(id="prompt-row"):
             yield TextArea(
                 text="",
@@ -1042,6 +1515,7 @@ class ChatApp(App[None]):
     def on_mount(self) -> None:
         self.query_one("#prompt", TextArea).focus()
         self._update_image_grid_columns()
+        self._refresh_pending_attachments_ui()
 
     def on_unmount(self) -> None:
         self._cleanup_temp_images()
@@ -1069,9 +1543,11 @@ class ChatApp(App[None]):
         self.query_one(RichLog).clear()
         self._transcript_lines.clear()
         self.last_image_url = None
+        self._pending_image_attachments.clear()
         self._session_images.clear()
         self._cleanup_temp_images()
         self._refresh_image_grid()
+        self._refresh_pending_attachments_ui()
         self._set_status("Chat log and conversation history cleared.")
         self.query_one("#prompt", TextArea).focus()
 
@@ -1087,9 +1563,38 @@ class ChatApp(App[None]):
         destination.write_text("\n\n".join(self._transcript_lines).strip() + "\n", encoding="utf-8")
         self._set_status(f"Saved chat: {destination}")
 
+    @on(Button.Pressed, "#attach-image-btn")
+    def on_attach_image_clicked(self, _: Button.Pressed) -> None:
+        self.push_screen(AddImageAttachmentScreen(), self._on_attachment_screen_closed)
+
+    @on(Button.Pressed, "#clear-attachments-btn")
+    def on_clear_attachments_clicked(self, _: Button.Pressed) -> None:
+        self._pending_image_attachments.clear()
+        self._refresh_pending_attachments_ui()
+        self._set_status("Cleared pending image attachments.")
+        self.query_one("#prompt", TextArea).focus()
+
     @on(Button.Pressed, "#send-btn")
     def on_send_clicked(self, _: Button.Pressed) -> None:
         self._submit_prompt_from_ui()
+
+    def _on_attachment_screen_closed(self, result: Optional[str]) -> None:
+        if result is None:
+            self.query_one("#prompt", TextArea).focus()
+            return
+
+        source = result
+        try:
+            attachment = self._build_pending_attachment(source)
+        except ValueError as exc:
+            self._set_status(str(exc))
+            self.query_one("#prompt", TextArea).focus()
+            return
+
+        self._pending_image_attachments.append(attachment)
+        self._refresh_pending_attachments_ui()
+        self._set_status(f"Attached image: {attachment.label}")
+        self.query_one("#prompt", TextArea).focus()
 
     def on_click(self, event: events.Click) -> None:
         if self._gallery_open:
@@ -1111,6 +1616,9 @@ class ChatApp(App[None]):
         self._open_image_gallery(index)
 
     def action_send_prompt(self) -> None:
+        if isinstance(self.screen, BrowseImageFileScreen):
+            self.screen.action_open_highlighted()
+            return
         prompt_widget = self.query_one("#prompt", TextArea)
         if self.focused is not prompt_widget:
             return
@@ -1144,6 +1652,8 @@ class ChatApp(App[None]):
     def _submit_prompt_from_ui(self) -> None:
         prompt_widget = self.query_one("#prompt", TextArea)
         send_button = self.query_one("#send-btn", Button)
+        attach_button = self.query_one("#attach-image-btn", Button)
+        clear_attachments_button = self.query_one("#clear-attachments-btn", Button)
 
         prompt = prompt_widget.text.strip()
         if not prompt:
@@ -1186,15 +1696,34 @@ class ChatApp(App[None]):
         if not self._prompt_history or self._prompt_history[-1] != prompt:
             self._prompt_history.append(prompt)
 
+        user_content_parts: list[dict[str, str]] = []
+        for attachment in self._pending_image_attachments:
+            part: dict[str, str] = {
+                "type": "input_image",
+                "image_url": attachment.image_url,
+            }
+            user_content_parts.append(part)
+
         self.pending_prompt = prompt
+        self.pending_user_content = (
+            [*user_content_parts, {"type": "input_text", "text": prompt}]
+            if user_content_parts
+            else prompt
+        )
         self.pending_options = options
         self.pending_input = self.conversation.build_request(
-            prompt, include_history=self.settings.include_history
+            prompt,
+            include_history=self.settings.include_history,
+            user_content_parts=user_content_parts,
         )
-        self._log_user(prompt)
+        self._log_user(prompt, attachment_count=len(user_content_parts))
+        self._pending_image_attachments.clear()
+        self._refresh_pending_attachments_ui()
         self._set_status("Waiting for xAI response...")
         prompt_widget.disabled = True
         send_button.disabled = True
+        attach_button.disabled = True
+        clear_attachments_button.disabled = True
         self.run_worker(self._ask_in_background, thread=True, exclusive=True, name="ask")
 
     def _ask_in_background(self) -> ChatResult:
@@ -1239,16 +1768,21 @@ class ChatApp(App[None]):
 
         prompt_box = self.query_one("#prompt", TextArea)
         send_button = self.query_one("#send-btn", Button)
+        attach_button = self.query_one("#attach-image-btn", Button)
+        clear_attachments_button = self.query_one("#clear-attachments-btn", Button)
         prompt_box.disabled = False
         send_button.disabled = False
+        attach_button.disabled = False
+        clear_attachments_button.disabled = len(self._pending_image_attachments) == 0
         prompt_box.focus()
 
         if event.state == WorkerState.SUCCESS:
             result = event.worker.result
             assert isinstance(result, ChatResult)
             assert self.pending_prompt is not None
+            assert self.pending_user_content is not None
             if self.settings.include_history:
-                self.conversation.commit_turn(self.pending_prompt, result.text)
+                self.conversation.commit_turn(self.pending_user_content, result.text)
             if result.image_urls:
                 self.last_image_url = result.image_urls[0]
             if result.image_urls or result.image_b64:
@@ -1265,6 +1799,7 @@ class ChatApp(App[None]):
             self._set_status("Request failed.")
 
         self.pending_prompt = None
+        self.pending_user_content = None
         self.pending_input = None
         self.pending_options = None
 
@@ -1273,6 +1808,87 @@ class ChatApp(App[None]):
         prompt_widget.load_text(text)
         lines = text.splitlines() or [""]
         prompt_widget.move_cursor((len(lines) - 1, len(lines[-1])))
+
+    def _refresh_pending_attachments_ui(self) -> None:
+        summary_widget = self.query_one("#attachments-status", Static)
+        clear_button = self.query_one("#clear-attachments-btn", Button)
+        thumbs = self.query_one("#attachments-thumbs", HorizontalScroll)
+        thumbs.remove_children()
+
+        if not self._pending_image_attachments:
+            summary_widget.update("Attachments: none")
+            thumbs.add_class("hidden")
+            if self.pending_prompt is None:
+                clear_button.disabled = True
+            return
+
+        thumbs.remove_class("hidden")
+        labels: list[str] = []
+        for attachment in self._pending_image_attachments:
+            label = attachment.label
+            if label.startswith("http://") or label.startswith("https://"):
+                labels.append(label if len(label) <= 50 else f"{label[:47]}...")
+                chip_label = label if len(label) <= 36 else f"{label[:33]}..."
+                thumbs.mount(Static(f"URL: {chip_label}", classes="attachment-url-chip"))
+            else:
+                labels.append(Path(label).name)
+                if attachment.preview_path and attachment.preview_path.exists():
+                    thumb = TextualImageWidget(classes="attachment-thumb")
+                    thumb.image = attachment.preview_path
+                    thumbs.mount(thumb)
+                else:
+                    file_name = Path(label).name
+                    chip_label = file_name if len(file_name) <= 36 else f"{file_name[:33]}..."
+                    thumbs.mount(Static(chip_label, classes="attachment-url-chip"))
+
+        preview = ", ".join(labels[:3])
+        if len(labels) > 3:
+            preview = f"{preview}, +{len(labels) - 3} more"
+        summary_widget.update(
+            f"Attachments ({len(self._pending_image_attachments)}): {preview}"
+        )
+        if self.pending_prompt is None:
+            clear_button.disabled = False
+
+    def _build_pending_attachment(self, source: str) -> PendingImageAttachment:
+        if source.startswith("http://") or source.startswith("https://"):
+            return PendingImageAttachment(
+                label=source,
+                image_url=source,
+                preview_path=None,
+            )
+
+        path = Path(source).expanduser()
+        if not path.is_absolute():
+            path = (Path.cwd() / path).resolve()
+        if not path.exists():
+            raise ValueError(f"Image file not found: {path}")
+        if not path.is_file():
+            raise ValueError(f"Not a file: {path}")
+
+        mime_type, _ = mimetypes.guess_type(path.name)
+        if not mime_type or not mime_type.startswith("image/"):
+            raise ValueError("Attachment must be an image file.")
+
+        try:
+            image_bytes = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"Could not read image file: {exc}") from exc
+        if not image_bytes:
+            raise ValueError("Image file is empty.")
+
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        data_url = f"data:{mime_type};base64,{encoded}"
+        return PendingImageAttachment(
+            label=str(path),
+            image_url=data_url,
+            preview_path=path,
+        )
+
+    @staticmethod
+    def is_likely_image_file(path: Path) -> bool:
+        mime_type, _ = mimetypes.guess_type(path.name)
+        return bool(mime_type and mime_type.startswith("image/"))
 
     def _materialize_session_images(
         self,
@@ -1323,7 +1939,7 @@ class ChatApp(App[None]):
 
         if not self._session_images:
             panel.add_class("hidden")
-            grid.mount(Static("No images generated yet.", id="image-grid-empty"))
+            grid.mount(Static("No images generated yet.", classes="image-grid-empty"))
             return
 
         panel.remove_class("hidden")
@@ -1428,9 +2044,12 @@ class ChatApp(App[None]):
                 pass
         self._temp_image_paths.clear()
 
-    def _log_user(self, prompt: str) -> None:
-        self.query_one(RichLog).write(Text(f"You: {prompt}"))
-        self._transcript_lines.append(f"You: {prompt}")
+    def _log_user(self, prompt: str, *, attachment_count: int = 0) -> None:
+        prefix = "You:"
+        if attachment_count > 0:
+            prefix = f"You (+{attachment_count} image{'s' if attachment_count != 1 else ''}):"
+        self.query_one(RichLog).write(Text(f"{prefix} {prompt}"))
+        self._transcript_lines.append(f"{prefix} {prompt}")
 
     def _log_assistant(self, message: str) -> None:
         self.query_one(RichLog).write(

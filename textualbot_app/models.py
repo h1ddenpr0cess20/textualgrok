@@ -1,10 +1,10 @@
 from dataclasses import dataclass
-from typing import Optional, TypedDict
+from typing import Any, Optional, TypedDict
 
 
 class ChatMessage(TypedDict):
     role: str
-    content: str
+    content: Any
 
 
 @dataclass

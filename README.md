@@ -37,9 +37,16 @@ XAI_IMAGE_MODEL=grok-imagine-image
 python textualbot.py
 ```
 
+## Serve (Browser)
+
+```powershell
+textual serve textualbot_serve.py:app
+```
+
 ## Project layout
 
 - `textualbot.py`: entrypoint wiring config + UI app.
+- `textualbot_serve.py`: Textual Serve app export for browser serving.
 - `textualbot_app/config.py`: environment configuration loading.
 - `textualbot_app/xai_client.py`: xAI Responses API transport layer.
 - `textualbot_app/conversation.py`: conversation state and request assembly.
@@ -61,5 +68,6 @@ python textualbot.py
 - Grok Imagine is executed as a client-side function tool in the Responses tool loop (`function_call` -> `function_call_output`), not as a separate heuristic pass.
 - Generated images are shown in the app preview panel (requires `textual-image` support in the terminal).
 - If image format is `url`, the link is shown in chat output and in the preview panel label. If image format is `b64_json`, the app decodes and previews the image locally and labels it as embedded base64 output.
+- Prompt-time image attachments are supported (`Attach Image`) using either a local file path, the built-in `Browse...` file picker, or an image URL. Local files are sent as `data:image/...;base64,...` content parts.
 - Tools currently support `web_search`, `x_search`, `code_interpreter`, `file_search`, and remote `mcp` servers.
 - No `openai` Python package is used.
