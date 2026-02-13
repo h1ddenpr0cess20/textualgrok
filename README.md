@@ -1,28 +1,43 @@
-# Textual xAI Chatbot (Responses API)
+# Textual xAI Chatbot
 
-Terminal chatbot built with Textual and xAI's Responses API (`POST https://api.x.ai/v1/responses`) using direct HTTP calls.
-Includes a redesigned settings dialog with tabbed sections and live model loading.
+Terminal-first chatbot built with [Textual](https://textual.textualize.io/) and xAI's Responses API (`/v1/responses`) using direct `httpx` calls.
+
+## What It Supports
+
+- Chat with xAI models from a Textual UI.
+- Live model refresh from xAI (`/v1/models`) inside Settings.
+- Tool toggles: `web_search`, `x_search`, `code_interpreter`, `file_search`, and remote `mcp`.
+- File and image attachments (single files, folders, or image URLs).
+- Optional image generation/editing via Grok Imagine (`/v1/images/generations`).
+- Saved UI settings in `.textualbot_settings.json`.
+- Chat transcript and generated image export to `exports/`.
 
 ## Requirements
 
-- Python 3.10+
+- Python `3.10+`
 - xAI API key
 
-## Setup
+## Install
+
+### Windows (PowerShell)
 
 ```powershell
 python -m venv .venv
 . .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-Create your env file:
-
-```powershell
 Copy-Item .env.example .env
 ```
 
-Then edit `.env` and set your key:
+### macOS / Linux (bash/zsh)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Edit `.env`:
 
 ```dotenv
 XAI_API_KEY=your_key_here
@@ -33,41 +48,61 @@ XAI_IMAGE_MODEL=grok-imagine-image
 
 ## Run
 
-```powershell
+```bash
 python textualbot.py
 ```
 
-## Serve (Browser)
+## Serve In Browser (Textual Serve)
 
-```powershell
+```bash
 textual serve textualbot_serve.py:app
 ```
 
-## Project layout
+## Controls
 
-- `textualbot.py`: entrypoint wiring config + UI app.
-- `textualbot_serve.py`: Textual Serve app export for browser serving.
-- `textualbot_app/config.py`: environment configuration loading.
-- `textualbot_app/xai_client.py`: xAI Responses API transport layer.
-- `textualbot_app/conversation.py`: conversation state and request assembly.
-- `textualbot_app/options.py`: feature toggle validation and request option builder.
-- `textualbot_app/app.py`: Textual UI and event handling.
-- `textualbot_app/models.py`: shared data types.
+- `Enter`: send prompt
+- `Shift+Enter`: newline in prompt
+- `Ctrl+S`: send prompt
+- `Alt+Up` / `Alt+Down` (or `Ctrl+P` / `Ctrl+N`): prompt history
+- `F1`: command palette (`Settings`, `Clear Chat`, `Save Chat`)
+- `Ctrl+C`: quit
 
-## Notes
+## Attachments
 
-- `Settings` opens a dedicated modal with separate tabs for:
-- Chat (model dropdown + system prompt + history mode)
-- Tools (web/x/code/file toggles)
-- File Search (vector stores + max results)
-- Image (Grok Imagine tool, edit source image, aspect ratio, format, model, count)
-- MCP (enable MCP + add/remove remote MCP server configs)
-- Chat model and Grok Imagine model dropdowns are populated from xAI at runtime via `GET /v1/models` (Refresh Models).
-- `Clear Chat` clears both displayed chat log and stored conversation history.
-- The app keeps conversation context in memory (when history mode is enabled) and sends it on each request.
-- Grok Imagine is executed as a client-side function tool in the Responses tool loop (`function_call` -> `function_call_output`), not as a separate heuristic pass.
-- Generated images are shown in the app preview panel (requires `textual-image` support in the terminal).
-- If image format is `url`, the link is shown in chat output and in the preview panel label. If image format is `b64_json`, the app decodes and previews the image locally and labels it as embedded base64 output.
-- Prompt-time file attachments are supported (`Attach File`) using either a local file path or the built-in `Browse...` file picker. The app supports a broad set of text/document formats (for example `.txt`, `.md`, code files, `.csv`, `.json`, `.pdf`, `.docx`, `.xlsx`, `.pptx`) and image attachments (`.jpg`, `.jpeg`, `.png`). Local image files are sent as `input_image` (`data:image/...;base64,...`) and other local file types are sent as `input_file` (`data:<mime>;base64,...` + filename). Direct URLs are supported for images.
-- Tools currently support `web_search`, `x_search`, `code_interpreter`, `file_search`, and remote `mcp` servers.
-- No `openai` Python package is used.
+- Local files and folders are supported.
+- URL attachments are supported for images only.
+- Supported image types: `.jpg`, `.jpeg`, `.png`.
+- Supported document/code types include common text, markdown, JSON/YAML/XML, CSV/TSV, PDF, Office docs, and many code extensions.
+
+Local images are sent as `input_image` data URLs. Other files are sent as `input_file` data URLs with filename metadata.
+
+## Settings
+
+Settings are available from the command palette and saved to:
+
+- `.textualbot_settings.json`
+
+Tabs include:
+
+- `Chat`: model, system prompt, history mode
+- `Tools`: web/x/code/file toggles
+- `File Search`: vector store IDs and max results
+- `Image`: image model/count/format/aspect ratio/edit source
+- `MCP`: enable and configure remote MCP servers
+
+## Exports
+
+- `Save Chat` writes markdown transcripts to `exports/chat-YYYYMMDD-HHMMSS.md`.
+- Saved images are written under `exports/images/`.
+
+## Project Layout
+
+- `textualbot.py`: local terminal entrypoint
+- `textualbot_serve.py`: browser serve entrypoint
+- `textualbot_app/chat_app.py`: main Textual app
+- `textualbot_app/settings_screen.py`: settings modal UI
+- `textualbot_app/options.py`: tool option validation/building
+- `textualbot_app/xai_client.py`: xAI HTTP client
+- `textualbot_app/attachments.py`: attachment file-type support logic
+- `textualbot_app/conversation.py`: conversation state/history assembly
+- `textualbot_app/config.py`: environment config loader

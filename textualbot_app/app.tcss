@@ -193,18 +193,23 @@ ImageGalleryScreen {
 }
 
 #gallery-image {
-    width: 100%;
+    width: auto;
     height: 1fr;
     overflow-x: hidden;
     overflow-y: hidden;
 }
 
-#gallery-source {
-    height: 2;
-    color: $text-muted;
+#gallery-source-scroll {
+    width: 100%;
+    height: 1;
     margin-top: 1;
-    overflow-x: hidden;
-    overflow-y: hidden;
+}
+
+#gallery-source {
+    width: auto;
+    height: 1;
+    color: $text-muted;
+    text-wrap: nowrap;
 }
 
 #gallery-actions {
@@ -232,6 +237,8 @@ HeaderIcon {
     height: 2fr;
     border: round $accent;
     padding: 1;
+    overflow-x: auto;
+    overflow-y: auto;
 }
 
 #image-panel {

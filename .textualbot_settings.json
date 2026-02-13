@@ -2,10 +2,10 @@
   "chat_model": "grok-4-1-fast-non-reasoning",
   "system_prompt": "You are an asshole AI assistant who likes to act like a jerk",
   "include_history": true,
-  "web_search": false,
-  "x_search": false,
-  "x_search_image_understanding": false,
-  "x_search_video_understanding": false,
+  "web_search": true,
+  "x_search": true,
+  "x_search_image_understanding": true,
+  "x_search_video_understanding": true,
   "code_interpreter": true,
   "file_search": false,
   "vector_store_ids_raw": "",
@@ -19,9 +19,6 @@
   "image_aspect_ratio_raw": "auto",
   "mcp_enabled": true,
   "mcp_servers": [
-    {
-      "server_url": "https://mcp.context7.com/mcp",
-      "server_label": "context7"
-    }
+    
   ]
 }
