@@ -4,7 +4,8 @@ from datetime import datetime
 import json
 import mimetypes
 import textwrap
-from typing import Any, Optional
+import time
+from typing import Any, Iterable, Optional
 import tempfile
 from pathlib import Path
 import re
@@ -12,10 +13,12 @@ import re
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual import events, on
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.message import Message
 from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import (
@@ -87,64 +90,6 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
         "9:20",
     )
 
-    CSS = """
-    SettingsScreen {
-        align: center middle;
-    }
-
-    #settings-dialog {
-        width: 92;
-        height: 42;
-        border: round $accent;
-        background: $panel;
-        padding: 1 2;
-    }
-
-    #settings-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-
-    #settings-tabs {
-        height: 1fr;
-    }
-
-    #mcp-scroll {
-        height: 1fr;
-    }
-
-    .settings-input {
-        width: 100%;
-        margin-bottom: 1;
-    }
-
-    .settings-row {
-        height: auto;
-        margin-bottom: 1;
-        align: left middle;
-    }
-
-    .settings-row Label {
-        width: 1fr;
-    }
-
-    #model-tools {
-        height: auto;
-        margin-bottom: 1;
-    }
-
-    #models-status {
-        color: $text-muted;
-        margin-top: 1;
-    }
-
-    #settings-actions {
-        height: auto;
-        margin-top: 1;
-        align: right middle;
-    }
-    """
-
     def __init__(self, initial: UISettings, client: XAIResponsesClient) -> None:
         super().__init__()
         self.initial = initial
@@ -166,109 +111,113 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
             yield Static("Settings", id="settings-title")
             with TabbedContent(id="settings-tabs"):
                 with TabPane("Chat"):
-                    yield Label("Model")
-                    yield Select(
-                        [(self.initial.chat_model, self.initial.chat_model)],
-                        value=self.initial.chat_model,
-                        allow_blank=False,
-                        id="select-chat-model",
-                        classes="settings-input",
-                    )
-                    with Horizontal(id="model-tools"):
-                        yield Button("Refresh Models", id="btn-refresh-models")
-                    yield Static("Loading models from server...", id="models-status")
-                    yield Label("System Prompt")
-                    yield Input(
-                        value=self.initial.system_prompt,
-                        id="input-system-prompt",
-                        classes="settings-input",
-                    )
-                    with Horizontal(classes="settings-row"):
-                        yield Label("Use Conversation History")
-                        yield Switch(value=self.initial.include_history, id="switch-include-history")
+                    with VerticalScroll(classes="settings-tab-scroll"):
+                        yield Label("Model")
+                        yield Select(
+                            [(self.initial.chat_model, self.initial.chat_model)],
+                            value=self.initial.chat_model,
+                            allow_blank=False,
+                            id="select-chat-model",
+                            classes="settings-input",
+                        )
+                        with Horizontal(id="model-tools"):
+                            yield Button("Refresh Models", id="btn-refresh-models")
+                        yield Static("Loading models from server...", id="models-status")
+                        yield Label("System Prompt")
+                        yield Input(
+                            value=self.initial.system_prompt,
+                            id="input-system-prompt",
+                            classes="settings-input",
+                        )
+                        with Horizontal(classes="settings-row"):
+                            yield Label("Use Conversation History")
+                            yield Switch(value=self.initial.include_history, id="switch-include-history")
 
                 with TabPane("Tools"):
-                    with Horizontal(classes="settings-row"):
-                        yield Label("Web Search")
-                        yield Switch(value=self.initial.web_search, id="switch-web-search")
-                    with Horizontal(classes="settings-row"):
-                        yield Label("X Search")
-                        yield Switch(value=self.initial.x_search, id="switch-x-search")
-                    with Horizontal(classes="settings-row"):
-                        yield Label("X Search: Image Understanding")
-                        yield Switch(
-                            value=self.initial.x_search_image_understanding,
-                            id="switch-x-search-image",
-                        )
-                    with Horizontal(classes="settings-row"):
-                        yield Label("X Search: Video Understanding")
-                        yield Switch(
-                            value=self.initial.x_search_video_understanding,
-                            id="switch-x-search-video",
-                        )
-                    with Horizontal(classes="settings-row"):
-                        yield Label("Code Interpreter")
-                        yield Switch(value=self.initial.code_interpreter, id="switch-code-interpreter")
-                    with Horizontal(classes="settings-row"):
-                        yield Label("File Search")
-                        yield Switch(value=self.initial.file_search, id="switch-file-search")
+                    with VerticalScroll(classes="settings-tab-scroll"):
+                        with Horizontal(classes="settings-row"):
+                            yield Label("Web Search")
+                            yield Switch(value=self.initial.web_search, id="switch-web-search")
+                        with Horizontal(classes="settings-row"):
+                            yield Label("X Search")
+                            yield Switch(value=self.initial.x_search, id="switch-x-search")
+                        with Horizontal(classes="settings-row"):
+                            yield Label("X Search: Image Understanding")
+                            yield Switch(
+                                value=self.initial.x_search_image_understanding,
+                                id="switch-x-search-image",
+                            )
+                        with Horizontal(classes="settings-row"):
+                            yield Label("X Search: Video Understanding")
+                            yield Switch(
+                                value=self.initial.x_search_video_understanding,
+                                id="switch-x-search-video",
+                            )
+                        with Horizontal(classes="settings-row"):
+                            yield Label("Code Interpreter")
+                            yield Switch(value=self.initial.code_interpreter, id="switch-code-interpreter")
+                        with Horizontal(classes="settings-row"):
+                            yield Label("File Search")
+                            yield Switch(value=self.initial.file_search, id="switch-file-search")
 
                 with TabPane("File Search"):
-                    yield Label("Vector Store IDs (comma-separated)")
-                    yield Input(
-                        value=self.initial.vector_store_ids_raw,
-                        placeholder="vs_123,vs_456",
-                        id="input-vector-store-ids",
-                        classes="settings-input",
-                    )
-                    yield Label("File Search Max Results")
-                    yield Input(
-                        value=self.initial.file_search_max_results_raw,
-                        id="input-file-search-max",
-                        classes="settings-input",
-                    )
+                    with VerticalScroll(classes="settings-tab-scroll"):
+                        yield Label("Vector Store IDs (comma-separated)")
+                        yield Input(
+                            value=self.initial.vector_store_ids_raw,
+                            placeholder="vs_123,vs_456",
+                            id="input-vector-store-ids",
+                            classes="settings-input",
+                        )
+                        yield Label("File Search Max Results")
+                        yield Input(
+                            value=self.initial.file_search_max_results_raw,
+                            id="input-file-search-max",
+                            classes="settings-input",
+                        )
 
                 with TabPane("Image"):
-                    with Horizontal(classes="settings-row"):
-                        yield Label("Enable Grok Imagine Tool")
-                        yield Switch(value=self.initial.image_generation, id="switch-image-generation")
-                    with Horizontal(classes="settings-row"):
-                        yield Label("Return Image As Base64")
-                        yield Switch(value=self.initial.image_as_base64, id="switch-image-b64")
-                    with Horizontal(classes="settings-row"):
-                        yield Label("Use Last Generated Image For Edits")
-                        yield Switch(value=self.initial.image_use_last, id="switch-image-use-last")
-                    yield Label("Grok Imagine Model")
-                    yield Select(
-                        [(self.initial.image_model, self.initial.image_model)],
-                        value=self.initial.image_model,
-                        allow_blank=False,
-                        id="input-image-model",
-                        classes="settings-input",
-                    )
-                    yield Label("Image Count (1-10)")
-                    yield Input(
-                        value=self.initial.image_count_raw,
-                        id="input-image-count",
-                        classes="settings-input",
-                    )
-                    yield Label("Aspect Ratio")
-                    yield Select(
-                        aspect_ratio_options,
-                        value=selected_aspect_ratio,
-                        allow_blank=False,
-                        id="select-image-aspect-ratio",
-                        classes="settings-input",
-                    )
-                    yield Label("Source Image URL (optional, for edits)")
-                    yield Input(
-                        value=self.initial.image_source_url_raw,
-                        id="input-image-source-url",
-                        classes="settings-input",
-                    )
+                    with VerticalScroll(classes="settings-tab-scroll"):
+                        with Horizontal(classes="settings-row"):
+                            yield Label("Enable Grok Imagine Tool")
+                            yield Switch(value=self.initial.image_generation, id="switch-image-generation")
+                        with Horizontal(classes="settings-row"):
+                            yield Label("Return Image As Base64")
+                            yield Switch(value=self.initial.image_as_base64, id="switch-image-b64")
+                        with Horizontal(classes="settings-row"):
+                            yield Label("Use Last Generated Image For Edits")
+                            yield Switch(value=self.initial.image_use_last, id="switch-image-use-last")
+                        yield Label("Grok Imagine Model")
+                        yield Select(
+                            [(self.initial.image_model, self.initial.image_model)],
+                            value=self.initial.image_model,
+                            allow_blank=False,
+                            id="input-image-model",
+                            classes="settings-input",
+                        )
+                        yield Label("Image Count (1-10)")
+                        yield Input(
+                            value=self.initial.image_count_raw,
+                            id="input-image-count",
+                            classes="settings-input",
+                        )
+                        yield Label("Aspect Ratio")
+                        yield Select(
+                            aspect_ratio_options,
+                            value=selected_aspect_ratio,
+                            allow_blank=False,
+                            id="select-image-aspect-ratio",
+                            classes="settings-input",
+                        )
+                        yield Label("Source Image URL (optional, for edits)")
+                        yield Input(
+                            value=self.initial.image_source_url_raw,
+                            id="input-image-source-url",
+                            classes="settings-input",
+                        )
 
                 with TabPane("MCP"):
-                    with VerticalScroll(id="mcp-scroll"):
+                    with VerticalScroll(id="mcp-scroll", classes="settings-tab-scroll"):
                         with Horizontal(classes="settings-row"):
                             yield Label("Enable MCP Tools")
                             yield Switch(value=self.initial.mcp_enabled, id="switch-mcp-enabled")
@@ -738,9 +687,9 @@ class SessionImageItem:
 
 
 @dataclass
-class PendingImageAttachment:
+class PendingAttachment:
     label: str
-    image_url: str
+    content_part: dict[str, str]
     preview_path: Path | None = None
 
 
@@ -751,89 +700,84 @@ class BrowseEntry:
     is_image: bool
 
 
-class BrowseImageFileScreen(ModalScreen[Optional[str]]):
-    CSS = """
-    BrowseImageFileScreen {
-        align: center middle;
-    }
+class OrderedSystemCommandsProvider(Provider):
+    async def discover(self) -> Hits:
+        for title, help_text, callback, discover in self.app.get_system_commands(self.screen):
+            if discover:
+                yield DiscoveryHit(title, callback, help=help_text)
 
-    #browse-dialog {
-        width: 94;
-        height: 34;
-        border: round $accent;
-        background: $panel;
-        padding: 1 2;
-    }
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for title, help_text, callback, *_ in self.app.get_system_commands(self.screen):
+            if (match := matcher.match(title)) > 0:
+                yield Hit(match, matcher.highlight(title), callback, help=help_text)
 
-    #browse-nav {
-        height: auto;
-        align: left middle;
-        margin-top: 1;
-    }
 
-    #browse-drive-select {
-        width: 14;
-        margin-left: 1;
-    }
+class BrowseOptionList(OptionList):
+    DOUBLE_CLICK_SECONDS = 0.45
 
-    #browse-main {
-        height: 1fr;
-        margin: 1 0;
-    }
+    def __init__(self, *content: object, **kwargs: object) -> None:
+        super().__init__(*content, **kwargs)
+        self._last_click_option: int | None = None
+        self._last_click_time: float = 0.0
 
-    #browse-list {
-        height: 1fr;
-        width: 1fr;
-        border: round $secondary;
-        margin-right: 1;
-    }
+    class OpenRequested(Message):
+        def __init__(self, option_list: "BrowseOptionList", option_index: int) -> None:
+            super().__init__()
+            self.option_list = option_list
+            self.option_index = option_index
 
-    #browse-preview-panel {
-        width: 34;
-        height: 1fr;
-        border: round $secondary;
-        padding: 0 1;
-    }
+        @property
+        def control(self) -> "BrowseOptionList":
+            return self.option_list
 
-    #browse-preview-title {
-        height: auto;
-        margin-bottom: 1;
-        text-style: bold;
-    }
+    def reset_click_chain(self) -> None:
+        self._last_click_option = None
+        self._last_click_time = 0.0
 
-    #browse-preview-image {
-        width: auto;
-        height: 8;
-    }
+    def _resolve_clicked_option(self, event: events.Click) -> int | None:
+        clicked_option = event.style.meta.get("option")
+        if isinstance(clicked_option, int):
+            return clicked_option
+        try:
+            line_number = self.scroll_offset.y + int(event.y)
+            if 0 <= line_number < len(self._lines):
+                return self._lines[line_number][0]
+        except (TypeError, ValueError):
+            return None
+        return None
 
-    #browse-preview-path {
-        height: auto;
-        color: $text-muted;
-        margin-top: 1;
-    }
+    async def _on_click(self, event: events.Click) -> None:
+        # Single click selects. Double click opens (via OptionSelected handler).
+        clicked_option = self._resolve_clicked_option(event)
+        if clicked_option is None:
+            return
 
-    #browse-selected {
-        height: 2;
-        color: $text-muted;
-    }
+        self.highlighted = clicked_option
+        now = time.monotonic()
+        is_timed_double = self._last_click_option == clicked_option and (
+            now - self._last_click_time <= self.DOUBLE_CLICK_SECONDS
+        )
+        if is_timed_double:
+            self.post_message(self.OpenRequested(self, clicked_option))
+            self.reset_click_chain()
+        else:
+            self._last_click_option = clicked_option
+            self._last_click_time = now
+        event.stop()
 
-    #browse-actions {
-        height: auto;
-        align: right middle;
-        margin-top: 1;
-    }
-    """
 
+class BrowseAttachmentFileScreen(ModalScreen[Optional[str]]):
     def __init__(self, start_path: Path | None = None) -> None:
         super().__init__()
-        self.start_path = (start_path or Path.cwd()).resolve()
+        self.start_path = (start_path or Path.home()).resolve()
         self._current_dir = self.start_path
         self._entries: list[BrowseEntry] = []
         self._selected_path: Optional[Path] = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="browse-dialog"):
-            yield Static("Browse Image File")
+            yield Static("Browse File or Folder")
             with Horizontal(id="browse-nav"):
                 yield Button("Home", id="btn-browse-home")
                 yield Button("CWD", id="btn-browse-cwd")
@@ -843,12 +787,12 @@ class BrowseImageFileScreen(ModalScreen[Optional[str]]):
                     id="browse-drive-select",
                 )
             with Horizontal(id="browse-main"):
-                yield OptionList(id="browse-list")
+                yield BrowseOptionList(id="browse-list")
                 with Vertical(id="browse-preview-panel"):
                     yield Static("Preview", id="browse-preview-title")
                     yield TextualImageWidget(id="browse-preview-image")
-                    yield Static("Select an image file.", id="browse-preview-path")
-            yield Static("No file selected.", id="browse-selected")
+                    yield Static("Select a file or folder.", id="browse-preview-path")
+            yield Static("No file or folder selected.", id="browse-selected")
             with Horizontal(id="browse-actions"):
                 yield Button("Cancel", id="btn-browse-cancel")
                 yield Button("Use Selected", id="btn-browse-use", variant="primary", disabled=True)
@@ -892,10 +836,21 @@ class BrowseImageFileScreen(ModalScreen[Optional[str]]):
 
     @on(OptionList.OptionSelected, "#browse-list")
     def on_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self._apply_highlight(event.option_index)
+
+    @on(BrowseOptionList.OpenRequested, "#browse-list")
+    def on_open_requested(self, event: BrowseOptionList.OpenRequested) -> None:
         self._activate_entry(event.option_index)
 
     @on(Button.Pressed, "#btn-browse-use")
     def on_use_clicked(self, _: Button.Pressed) -> None:
+        if self._selected_path is None:
+            option_list = self.query_one("#browse-list", OptionList)
+            highlighted = option_list.highlighted
+            if highlighted is not None:
+                entry = self._entry_at_index(highlighted)
+                if entry is not None and entry.kind in {"dir", "file"}:
+                    self._selected_path = entry.path
         if self._selected_path is None:
             return
         self.dismiss(str(self._selected_path))
@@ -910,6 +865,7 @@ class BrowseImageFileScreen(ModalScreen[Optional[str]]):
             return
         self._current_dir = resolved
         self._selected_path = None
+        self.query_one("#browse-list", BrowseOptionList).reset_click_chain()
         self._sync_drive_select_with_path(resolved)
         self._rebuild_browse_list()
 
@@ -934,7 +890,7 @@ class BrowseImageFileScreen(ModalScreen[Optional[str]]):
             option_list.set_options([])
             selected_status.update(f"Cannot open directory: {exc}")
             preview_image.image = None
-            preview_path.update("Select an image file.")
+            preview_path.update("Select a file or folder.")
             use_button.disabled = True
             return
 
@@ -946,20 +902,33 @@ class BrowseImageFileScreen(ModalScreen[Optional[str]]):
             [item for item in children if item.is_file()],
             key=lambda p: p.name.lower(),
         )
+        supported_files: list[Path] = []
+        unsupported_files_count = 0
+        for file_path in files:
+            if ChatApp.is_supported_attachment_file(file_path):
+                supported_files.append(file_path)
+            else:
+                unsupported_files_count += 1
 
         for directory in directories:
             self._entries.append(BrowseEntry(path=directory, kind="dir", is_image=False))
             options.append(f"[DIR] {directory.name}")
-        for file_path in files:
+        for file_path in supported_files:
             is_image = ChatApp.is_likely_image_file(file_path)
             self._entries.append(BrowseEntry(path=file_path, kind="file", is_image=is_image))
             marker = "[IMG]" if is_image else "[FILE]"
             options.append(f"{marker} {file_path.name}")
 
         option_list.set_options(options)
-        selected_status.update(f"Browsing: {self._current_dir}")
+        selected_message = f"Browsing: {self._current_dir}"
+        if unsupported_files_count > 0:
+            selected_message = (
+                f"{selected_message} ({unsupported_files_count} unsupported file"
+                f"{'s' if unsupported_files_count != 1 else ''} hidden)"
+            )
+        selected_status.update(selected_message)
         preview_image.image = None
-        preview_path.update("Select an image file.")
+        preview_path.update("Select a file or folder.")
         use_button.disabled = True
 
         if self._entries:
@@ -991,15 +960,16 @@ class BrowseImageFileScreen(ModalScreen[Optional[str]]):
         selected_status = self.query_one("#browse-selected", Static)
 
         if entry.kind in {"parent", "dir"}:
-            self._selected_path = None
+            self._selected_path = entry.path if entry.kind == "dir" else None
             preview_image.image = None
             if entry.kind == "parent":
                 selected_status.update(f"Up to: {entry.path}")
                 preview_path.update("Click .. to go up.")
+                use_button.disabled = True
             else:
                 selected_status.update(f"Directory: {entry.path}")
-                preview_path.update("Open directory.")
-            use_button.disabled = True
+                preview_path.update("Use Selected to attach this folder, or press Enter to open it.")
+                use_button.disabled = False
             return
 
         if entry.is_image:
@@ -1010,11 +980,11 @@ class BrowseImageFileScreen(ModalScreen[Optional[str]]):
             use_button.disabled = False
             return
 
-        self._selected_path = None
-        selected_status.update(f"Not an image file: {entry.path.name}")
+        self._selected_path = entry.path
+        selected_status.update(str(entry.path))
         preview_image.image = None
-        preview_path.update("Not an image file.")
-        use_button.disabled = True
+        preview_path.update(str(entry.path))
+        use_button.disabled = False
 
     def _populate_drive_select(self) -> None:
         select = self.query_one("#browse-drive-select", Select)
@@ -1057,56 +1027,16 @@ class BrowseImageFileScreen(ModalScreen[Optional[str]]):
         return [str(root)] if root.exists() else []
 
 
-class AddImageAttachmentScreen(ModalScreen[Optional[str]]):
-    CSS = """
-    AddImageAttachmentScreen {
-        align: center middle;
-    }
-
-    #attach-dialog {
-        width: 88;
-        height: auto;
-        border: round $accent;
-        background: $panel;
-        padding: 1 2;
-    }
-
-    #attach-actions {
-        height: auto;
-        margin-top: 1;
-        align: right middle;
-    }
-
-    #attach-source-row {
-        height: auto;
-        align: left middle;
-    }
-
-    #input-attach-image-source {
-        width: 1fr;
-        margin-right: 1;
-    }
-
-    #attach-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-
-    .settings-input {
-        width: 100%;
-        margin-bottom: 1;
-    }
-    """
-
+class AddAttachmentScreen(ModalScreen[Optional[str]]):
     def compose(self) -> ComposeResult:
         with Vertical(id="attach-dialog"):
-            yield Static("Attach Image", id="attach-title")
-            yield Label("Image path or URL")
+            yield Static("Attach File or Folder", id="attach-title")
+            yield Label("File path, folder path, or image URL")
             with Horizontal(id="attach-source-row"):
                 yield Input(
                     value="",
-                    placeholder=r"C:\path\to\image.png or https://example.com/image.jpg",
-                    id="input-attach-image-source",
+                    placeholder=r"C:\path\to\file-or-folder or https://example.com/image.jpg",
+                    id="input-attach-source",
                     classes="settings-input",
                 )
                 yield Button("Browse...", id="btn-attach-browse")
@@ -1115,7 +1045,7 @@ class AddImageAttachmentScreen(ModalScreen[Optional[str]]):
                 yield Button("Attach", id="btn-attach-confirm", variant="primary")
 
     def on_mount(self) -> None:
-        self.query_one("#input-attach-image-source", Input).focus()
+        self.query_one("#input-attach-source", Input).focus()
 
     @on(Button.Pressed, "#btn-attach-cancel")
     def on_cancel_clicked(self, _: Button.Pressed) -> None:
@@ -1123,8 +1053,8 @@ class AddImageAttachmentScreen(ModalScreen[Optional[str]]):
 
     @on(Button.Pressed, "#btn-attach-browse")
     def on_browse_clicked(self, _: Button.Pressed) -> None:
-        current_value = self.query_one("#input-attach-image-source", Input).value.strip()
-        start_path = Path.cwd()
+        current_value = self.query_one("#input-attach-source", Input).value.strip()
+        start_path = Path.home()
         if current_value and not (current_value.startswith("http://") or current_value.startswith("https://")):
             candidate = Path(current_value).expanduser()
             if candidate.is_file():
@@ -1133,73 +1063,24 @@ class AddImageAttachmentScreen(ModalScreen[Optional[str]]):
                 start_path = candidate.resolve()
             elif candidate.parent.exists():
                 start_path = candidate.parent.resolve()
-        self.app.push_screen(BrowseImageFileScreen(start_path=start_path), self._on_browse_closed)
+        self.app.push_screen(BrowseAttachmentFileScreen(start_path=start_path), self._on_browse_closed)
 
     def _on_browse_closed(self, selected_path: Optional[str]) -> None:
         if not selected_path:
-            self.query_one("#input-attach-image-source", Input).focus()
+            self.query_one("#input-attach-source", Input).focus()
             return
-        self.query_one("#input-attach-image-source", Input).value = selected_path
-        self.query_one("#input-attach-image-source", Input).focus()
+        self.query_one("#input-attach-source", Input).value = selected_path
+        self.query_one("#input-attach-source", Input).focus()
 
     @on(Button.Pressed, "#btn-attach-confirm")
     def on_confirm_clicked(self, _: Button.Pressed) -> None:
-        source = self.query_one("#input-attach-image-source", Input).value.strip()
+        source = self.query_one("#input-attach-source", Input).value.strip()
         if not source:
             return
         self.dismiss(source)
 
 
 class ImageGalleryScreen(Screen[None]):
-    CSS = """
-    ImageGalleryScreen {
-        layout: vertical;
-        background: $background;
-        overflow-x: hidden;
-        overflow-y: hidden;
-    }
-
-    #gallery-dialog {
-        width: 100%;
-        height: 100%;
-        background: $panel;
-        padding: 1 2;
-        overflow-x: hidden;
-        overflow-y: hidden;
-    }
-
-    #gallery-header {
-        height: auto;
-        align: left middle;
-        margin-bottom: 1;
-    }
-
-    #gallery-counter {
-        text-style: bold;
-    }
-
-    #gallery-image {
-        width: 100%;
-        height: 1fr;
-        overflow-x: hidden;
-        overflow-y: hidden;
-    }
-
-    #gallery-source {
-        height: 2;
-        color: $text-muted;
-        margin-top: 1;
-        overflow-x: hidden;
-        overflow-y: hidden;
-    }
-
-    #gallery-actions {
-        height: auto;
-        margin-top: 1;
-        align: center middle;
-    }
-    """
-
     BINDINGS = [
         Binding("escape", "close", "Close"),
         Binding("left", "prev_image", "Prev"),
@@ -1300,151 +1181,102 @@ class ImageGalleryScreen(Screen[None]):
 
 class ChatApp(App[None]):
     TITLE = "xAI Textual Chatbot"
-    CSS = """
-    Screen {
-        layout: vertical;
+    CSS_PATH = "app.tcss"
+    COMMANDS = {OrderedSystemCommandsProvider}
+    # Based on Context7 xAI docs: files support many text-based formats and common office docs.
+    SUPPORTED_ATTACHMENT_EXTENSIONS = {
+        ".txt",
+        ".md",
+        ".markdown",
+        ".rst",
+        ".rtf",
+        ".csv",
+        ".tsv",
+        ".json",
+        ".jsonl",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".log",
+        ".xml",
+        ".html",
+        ".htm",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".ppt",
+        ".pptx",
+        ".xls",
+        ".xlsx",
+        ".py",
+        ".pyi",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cc",
+        ".cs",
+        ".go",
+        ".rs",
+        ".rb",
+        ".php",
+        ".swift",
+        ".kt",
+        ".kts",
+        ".scala",
+        ".sql",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".ps1",
+        ".bat",
+        ".cmd",
     }
-
-    #chat-column {
-        height: 1fr;
-        margin: 0 1;
+    SUPPORTED_ATTACHMENT_FILENAMES = {
+        "dockerfile",
+        "makefile",
+        "readme",
+        "license",
     }
-
-    #chat-toolbar {
-        height: auto;
-        margin: 0 0 1 0;
+    SUPPORTED_IMAGE_EXTENSIONS = {
+        ".jpg",
+        ".jpeg",
+        ".png",
     }
-
-    #chat-log {
-        height: 2fr;
-        border: round $accent;
-        padding: 1;
+    SUPPORTED_IMAGE_MIME_TYPES = {
+        "image/jpeg",
+        "image/png",
     }
-
-    #image-panel {
-        height: 1fr;
-        border: round $secondary;
-        margin-top: 1;
-        padding: 1;
+    SUPPORTED_ATTACHMENT_MIME_TYPES = {
+        "application/pdf",
+        "application/json",
+        "application/xml",
+        "application/yaml",
+        "application/x-yaml",
+        "application/rtf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "text/csv",
+        "text/markdown",
     }
-
-    #image-panel.hidden {
-        display: none;
-    }
-
-    #image-panel-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-
-    #image-grid-scroll {
-        height: 1fr;
-    }
-
-    #image-grid {
-        layout: grid;
-        grid-size: 1;
-        grid-gutter: 1 1;
-        height: auto;
-    }
-
-    .image-tile {
-        border: round $secondary;
-        padding: 0 1;
-        height: auto;
-    }
-
-    .image-thumb {
-        width: auto;
-        height: 6;
-    }
-
-    .image-caption {
-        height: auto;
-        margin-top: 1;
-        color: $text-muted;
-    }
-
-    .image-open-btn {
-        width: 100%;
-        margin-top: 1;
-    }
-
-    .image-grid-empty {
-        color: $text-muted;
-    }
-
-    #status {
-        margin-top: 1;
-        color: $text-muted;
-    }
-
-    #prompt-row {
-        height: auto;
-        margin: 0 1 1 1;
-    }
-
-    #attachments-bar {
-        width: 100%;
-        height: auto;
-        margin: 0 1 1 1;
-        align: left middle;
-    }
-
-    #attachments-status {
-        width: 1fr;
-        height: 1;
-        color: $text-muted;
-    }
-
-    #attachments-actions {
-        width: 1fr;
-        height: auto;
-        align: right middle;
-    }
-
-    #attachments-actions Button {
-        margin-left: 1;
-    }
-
-    #attachments-thumbs {
-        height: 6;
-        margin: 0 1 1 1;
-        border: round $secondary;
-        padding: 0 1;
-    }
-
-    #attachments-thumbs.hidden {
-        display: none;
-    }
-
-    .attachment-thumb {
-        width: auto;
-        height: 4;
-        margin-right: 1;
-    }
-
-    .attachment-url-chip {
-        width: auto;
-        height: auto;
-        margin-right: 1;
-        border: round $secondary;
-        padding: 0 1;
-    }
-
-    #prompt {
-        width: 1fr;
-        height: 5;
-    }
-
-    #send-btn {
-        width: 12;
-        margin-left: 1;
-    }
-    """
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
+        Binding("f1", "command_palette", "☰ Menu"),
         Binding("enter", "send_prompt", "Send", show=False, priority=True),
         Binding("ctrl+s", "send_prompt", "Send"),
         Binding("ctrl+p", "prompt_history_prev", "Prev Prompt"),
@@ -1468,7 +1300,7 @@ class ChatApp(App[None]):
         self.pending_input: Optional[list[ChatMessage]] = None
         self.pending_options: Optional[RequestOptions] = None
         self.last_image_url: Optional[str] = None
-        self._pending_image_attachments: list[PendingImageAttachment] = []
+        self._pending_attachments: list[PendingAttachment] = []
         self._session_images: list[SessionImageItem] = []
         self._temp_image_paths: list[Path] = []
         self._gallery_open = False
@@ -1478,23 +1310,19 @@ class ChatApp(App[None]):
         self._prompt_history_draft: str = ""
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield Header(icon="☰")
         with Vertical(id="chat-column"):
-            with Horizontal(id="chat-toolbar"):
-                yield Button("Settings", id="open-settings-btn")
-                yield Button("Clear Chat", id="clear-chat-btn")
-                yield Button("Save Chat", id="save-chat-btn")
             yield RichLog(id="chat-log", auto_scroll=True, wrap=True, highlight=False, markup=False)
             with Vertical(id="image-panel", classes="hidden"):
                 yield Static("Session Images", id="image-panel-title")
                 with VerticalScroll(id="image-grid-scroll"):
                     with Vertical(id="image-grid"):
                         yield Static("No images generated yet.", classes="image-grid-empty")
-            yield Static("Ready. Click Settings to configure tools and model.", id="status")
+            yield Static("Ready. Press F1 for menu.", id="status")
         with Horizontal(id="attachments-bar"):
             yield Static("Attachments: none", id="attachments-status")
             with Horizontal(id="attachments-actions"):
-                yield Button("Attach Image", id="attach-image-btn", variant="default")
+                yield Button("Attach File/Folder", id="attach-file-btn", variant="default")
                 yield Button("Clear Attach", id="clear-attachments-btn", variant="default", disabled=True)
         with HorizontalScroll(id="attachments-thumbs", classes="hidden"):
             pass
@@ -1524,8 +1352,7 @@ class ChatApp(App[None]):
     def on_resize(self, event: events.Resize) -> None:
         self._update_image_grid_columns(event.size.width)
 
-    @on(Button.Pressed, "#open-settings-btn")
-    def on_open_settings_clicked(self, _: Button.Pressed) -> None:
+    def action_open_settings(self) -> None:
         self.push_screen(SettingsScreen(self.settings, self.client), self._on_settings_closed)
 
     def _on_settings_closed(self, settings: Optional[UISettings]) -> None:
@@ -1537,13 +1364,12 @@ class ChatApp(App[None]):
             self._set_status("Settings saved.")
         self.query_one("#prompt", TextArea).focus()
 
-    @on(Button.Pressed, "#clear-chat-btn")
-    def on_clear_chat_clicked(self, _: Button.Pressed) -> None:
+    def action_clear_chat(self) -> None:
         self.conversation.clear_history()
         self.query_one(RichLog).clear()
         self._transcript_lines.clear()
         self.last_image_url = None
-        self._pending_image_attachments.clear()
+        self._pending_attachments.clear()
         self._session_images.clear()
         self._cleanup_temp_images()
         self._refresh_image_grid()
@@ -1551,8 +1377,7 @@ class ChatApp(App[None]):
         self._set_status("Chat log and conversation history cleared.")
         self.query_one("#prompt", TextArea).focus()
 
-    @on(Button.Pressed, "#save-chat-btn")
-    def on_save_chat_clicked(self, _: Button.Pressed) -> None:
+    def action_save_chat(self) -> None:
         if not self._transcript_lines:
             self._set_status("No chat content to save yet.")
             return
@@ -1563,15 +1388,21 @@ class ChatApp(App[None]):
         destination.write_text("\n\n".join(self._transcript_lines).strip() + "\n", encoding="utf-8")
         self._set_status(f"Saved chat: {destination}")
 
-    @on(Button.Pressed, "#attach-image-btn")
-    def on_attach_image_clicked(self, _: Button.Pressed) -> None:
-        self.push_screen(AddImageAttachmentScreen(), self._on_attachment_screen_closed)
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        yield SystemCommand("Settings", "Open settings dialog", self.action_open_settings)
+        yield SystemCommand("Clear Chat", "Clear chat log and conversation history", self.action_clear_chat)
+        yield SystemCommand("Save Chat", "Save chat transcript to exports", self.action_save_chat)
+        yield from super().get_system_commands(screen)
+
+    @on(Button.Pressed, "#attach-file-btn")
+    def on_attach_file_clicked(self, _: Button.Pressed) -> None:
+        self.push_screen(AddAttachmentScreen(), self._on_attachment_screen_closed)
 
     @on(Button.Pressed, "#clear-attachments-btn")
     def on_clear_attachments_clicked(self, _: Button.Pressed) -> None:
-        self._pending_image_attachments.clear()
+        self._pending_attachments.clear()
         self._refresh_pending_attachments_ui()
-        self._set_status("Cleared pending image attachments.")
+        self._set_status("Cleared pending attachments.")
         self.query_one("#prompt", TextArea).focus()
 
     @on(Button.Pressed, "#send-btn")
@@ -1585,15 +1416,33 @@ class ChatApp(App[None]):
 
         source = result
         try:
-            attachment = self._build_pending_attachment(source)
+            attachments, skipped_unsupported = self._build_pending_attachments(source)
         except ValueError as exc:
             self._set_status(str(exc))
             self.query_one("#prompt", TextArea).focus()
             return
 
-        self._pending_image_attachments.append(attachment)
+        self._pending_attachments.extend(attachments)
         self._refresh_pending_attachments_ui()
-        self._set_status(f"Attached image: {attachment.label}")
+        is_folder_source = False
+        if not (source.startswith("http://") or source.startswith("https://")):
+            source_path = Path(source).expanduser()
+            if not source_path.is_absolute():
+                source_path = (Path.cwd() / source_path).resolve()
+            is_folder_source = source_path.exists() and source_path.is_dir()
+        if is_folder_source:
+            source_path = Path(source).expanduser()
+            if not source_path.is_absolute():
+                source_path = (Path.cwd() / source_path).resolve()
+            message = f"Attached folder: {source_path} ({len(attachments)} files)"
+            if skipped_unsupported > 0:
+                message = (
+                    f"{message}; skipped {skipped_unsupported} unsupported file"
+                    f"{'s' if skipped_unsupported != 1 else ''}"
+                )
+            self._set_status(message)
+        else:
+            self._set_status(f"Attached: {attachments[0].label}")
         self.query_one("#prompt", TextArea).focus()
 
     def on_click(self, event: events.Click) -> None:
@@ -1616,7 +1465,7 @@ class ChatApp(App[None]):
         self._open_image_gallery(index)
 
     def action_send_prompt(self) -> None:
-        if isinstance(self.screen, BrowseImageFileScreen):
+        if isinstance(self.screen, BrowseAttachmentFileScreen):
             self.screen.action_open_highlighted()
             return
         prompt_widget = self.query_one("#prompt", TextArea)
@@ -1652,7 +1501,7 @@ class ChatApp(App[None]):
     def _submit_prompt_from_ui(self) -> None:
         prompt_widget = self.query_one("#prompt", TextArea)
         send_button = self.query_one("#send-btn", Button)
-        attach_button = self.query_one("#attach-image-btn", Button)
+        attach_button = self.query_one("#attach-file-btn", Button)
         clear_attachments_button = self.query_one("#clear-attachments-btn", Button)
 
         prompt = prompt_widget.text.strip()
@@ -1697,12 +1546,8 @@ class ChatApp(App[None]):
             self._prompt_history.append(prompt)
 
         user_content_parts: list[dict[str, str]] = []
-        for attachment in self._pending_image_attachments:
-            part: dict[str, str] = {
-                "type": "input_image",
-                "image_url": attachment.image_url,
-            }
-            user_content_parts.append(part)
+        for attachment in self._pending_attachments:
+            user_content_parts.append(dict(attachment.content_part))
 
         self.pending_prompt = prompt
         self.pending_user_content = (
@@ -1717,7 +1562,7 @@ class ChatApp(App[None]):
             user_content_parts=user_content_parts,
         )
         self._log_user(prompt, attachment_count=len(user_content_parts))
-        self._pending_image_attachments.clear()
+        self._pending_attachments.clear()
         self._refresh_pending_attachments_ui()
         self._set_status("Waiting for xAI response...")
         prompt_widget.disabled = True
@@ -1768,12 +1613,12 @@ class ChatApp(App[None]):
 
         prompt_box = self.query_one("#prompt", TextArea)
         send_button = self.query_one("#send-btn", Button)
-        attach_button = self.query_one("#attach-image-btn", Button)
+        attach_button = self.query_one("#attach-file-btn", Button)
         clear_attachments_button = self.query_one("#clear-attachments-btn", Button)
         prompt_box.disabled = False
         send_button.disabled = False
         attach_button.disabled = False
-        clear_attachments_button.disabled = len(self._pending_image_attachments) == 0
+        clear_attachments_button.disabled = len(self._pending_attachments) == 0
         prompt_box.focus()
 
         if event.state == WorkerState.SUCCESS:
@@ -1815,7 +1660,7 @@ class ChatApp(App[None]):
         thumbs = self.query_one("#attachments-thumbs", HorizontalScroll)
         thumbs.remove_children()
 
-        if not self._pending_image_attachments:
+        if not self._pending_attachments:
             summary_widget.update("Attachments: none")
             thumbs.add_class("hidden")
             if self.pending_prompt is None:
@@ -1824,7 +1669,7 @@ class ChatApp(App[None]):
 
         thumbs.remove_class("hidden")
         labels: list[str] = []
-        for attachment in self._pending_image_attachments:
+        for attachment in self._pending_attachments:
             label = attachment.label
             if label.startswith("http://") or label.startswith("https://"):
                 labels.append(label if len(label) <= 50 else f"{label[:47]}...")
@@ -1845,50 +1690,135 @@ class ChatApp(App[None]):
         if len(labels) > 3:
             preview = f"{preview}, +{len(labels) - 3} more"
         summary_widget.update(
-            f"Attachments ({len(self._pending_image_attachments)}): {preview}"
+            f"Attachments ({len(self._pending_attachments)}): {preview}"
         )
         if self.pending_prompt is None:
             clear_button.disabled = False
 
-    def _build_pending_attachment(self, source: str) -> PendingImageAttachment:
+    def _build_pending_attachments(self, source: str) -> tuple[list[PendingAttachment], int]:
         if source.startswith("http://") or source.startswith("https://"):
-            return PendingImageAttachment(
-                label=source,
-                image_url=source,
-                preview_path=None,
+            if not self.is_likely_image_url(source):
+                raise ValueError(
+                    "Only image URLs are supported. Use a local file path for other file types."
+                )
+            return (
+                [
+                    PendingAttachment(
+                        label=source,
+                        content_part={"type": "input_image", "image_url": source},
+                        preview_path=None,
+                    )
+                ],
+                0,
             )
 
         path = Path(source).expanduser()
         if not path.is_absolute():
             path = (Path.cwd() / path).resolve()
         if not path.exists():
-            raise ValueError(f"Image file not found: {path}")
+            raise ValueError(f"Path not found: {path}")
+
+        if path.is_dir():
+            files = sorted(
+                [item for item in path.rglob("*") if item.is_file()],
+                key=lambda item: str(item).lower(),
+            )
+            if not files:
+                raise ValueError(f"Folder has no files: {path}")
+            supported_files: list[Path] = []
+            unsupported_files_count = 0
+            for file_path in files:
+                if self.is_supported_attachment_file(file_path):
+                    supported_files.append(file_path)
+                else:
+                    unsupported_files_count += 1
+            if not supported_files:
+                raise ValueError(f"Folder has no supported files: {path}")
+            attachments: list[PendingAttachment] = []
+            for file_path in supported_files:
+                relative_name = file_path.relative_to(path).as_posix()
+                attachments.append(
+                    self._build_pending_attachment_from_file(
+                        file_path,
+                        filename=relative_name,
+                    )
+                )
+            return attachments, unsupported_files_count
+
         if not path.is_file():
+            raise ValueError(f"Not a file or folder: {path}")
+        return [self._build_pending_attachment_from_file(path)], 0
+
+    def _build_pending_attachment_from_file(
+        self,
+        path: Path,
+        *,
+        filename: Optional[str] = None,
+    ) -> PendingAttachment:
+        if not path.exists() or not path.is_file():
             raise ValueError(f"Not a file: {path}")
+        if not self.is_supported_attachment_file(path):
+            raise ValueError(f"Unsupported file type: {path}")
 
         mime_type, _ = mimetypes.guess_type(path.name)
-        if not mime_type or not mime_type.startswith("image/"):
-            raise ValueError("Attachment must be an image file.")
+        if not mime_type:
+            mime_type = "application/octet-stream"
 
         try:
-            image_bytes = path.read_bytes()
+            file_bytes = path.read_bytes()
         except OSError as exc:
-            raise ValueError(f"Could not read image file: {exc}") from exc
-        if not image_bytes:
-            raise ValueError("Image file is empty.")
+            raise ValueError(f"Could not read file: {exc}") from exc
+        if not file_bytes:
+            raise ValueError(f"File is empty: {path}")
 
-        encoded = base64.b64encode(image_bytes).decode("ascii")
+        encoded = base64.b64encode(file_bytes).decode("ascii")
         data_url = f"data:{mime_type};base64,{encoded}"
-        return PendingImageAttachment(
+        if mime_type.startswith("image/"):
+            return PendingAttachment(
+                label=str(path),
+                content_part={"type": "input_image", "image_url": data_url},
+                preview_path=path,
+            )
+        return PendingAttachment(
             label=str(path),
-            image_url=data_url,
-            preview_path=path,
+            content_part={
+                "type": "input_file",
+                "filename": filename or path.name,
+                "file_data": data_url,
+            },
+            preview_path=None,
         )
 
     @staticmethod
     def is_likely_image_file(path: Path) -> bool:
         mime_type, _ = mimetypes.guess_type(path.name)
-        return bool(mime_type and mime_type.startswith("image/"))
+        if mime_type in ChatApp.SUPPORTED_IMAGE_MIME_TYPES:
+            return True
+        return path.suffix.lower() in ChatApp.SUPPORTED_IMAGE_EXTENSIONS
+
+    @classmethod
+    def is_supported_attachment_file(cls, path: Path) -> bool:
+        extension = path.suffix.lower()
+        if extension in cls.SUPPORTED_IMAGE_EXTENSIONS:
+            return True
+        file_name = path.name.lower()
+        if file_name in cls.SUPPORTED_ATTACHMENT_FILENAMES:
+            return True
+        if extension in cls.SUPPORTED_ATTACHMENT_EXTENSIONS:
+            return True
+        mime_type, _ = mimetypes.guess_type(path.name)
+        if not mime_type:
+            return False
+        if mime_type.startswith("text/"):
+            return True
+        return mime_type in cls.SUPPORTED_ATTACHMENT_MIME_TYPES
+
+    @staticmethod
+    def is_likely_image_url(url: str) -> bool:
+        mime_type, _ = mimetypes.guess_type(url)
+        if mime_type in ChatApp.SUPPORTED_IMAGE_MIME_TYPES:
+            return True
+        return Path(url).suffix.lower() in ChatApp.SUPPORTED_IMAGE_EXTENSIONS
 
     def _materialize_session_images(
         self,
@@ -2047,7 +1977,7 @@ class ChatApp(App[None]):
     def _log_user(self, prompt: str, *, attachment_count: int = 0) -> None:
         prefix = "You:"
         if attachment_count > 0:
-            prefix = f"You (+{attachment_count} image{'s' if attachment_count != 1 else ''}):"
+            prefix = f"You (+{attachment_count} attachment{'s' if attachment_count != 1 else ''}):"
         self.query_one(RichLog).write(Text(f"{prefix} {prompt}"))
         self._transcript_lines.append(f"{prefix} {prompt}")
 

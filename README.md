@@ -68,6 +68,6 @@ textual serve textualbot_serve.py:app
 - Grok Imagine is executed as a client-side function tool in the Responses tool loop (`function_call` -> `function_call_output`), not as a separate heuristic pass.
 - Generated images are shown in the app preview panel (requires `textual-image` support in the terminal).
 - If image format is `url`, the link is shown in chat output and in the preview panel label. If image format is `b64_json`, the app decodes and previews the image locally and labels it as embedded base64 output.
-- Prompt-time image attachments are supported (`Attach Image`) using either a local file path, the built-in `Browse...` file picker, or an image URL. Local files are sent as `data:image/...;base64,...` content parts.
+- Prompt-time file attachments are supported (`Attach File`) using either a local file path or the built-in `Browse...` file picker. The app supports a broad set of text/document formats (for example `.txt`, `.md`, code files, `.csv`, `.json`, `.pdf`, `.docx`, `.xlsx`, `.pptx`) and image attachments (`.jpg`, `.jpeg`, `.png`). Local image files are sent as `input_image` (`data:image/...;base64,...`) and other local file types are sent as `input_file` (`data:<mime>;base64,...` + filename). Direct URLs are supported for images.
 - Tools currently support `web_search`, `x_search`, `code_interpreter`, `file_search`, and remote `mcp` servers.
 - No `openai` Python package is used.
