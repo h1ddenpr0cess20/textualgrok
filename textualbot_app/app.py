@@ -1276,7 +1276,7 @@ class ChatApp(App[None]):
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
-        Binding("f1", "command_palette", "☰ Menu"),
+        Binding("f1", "command_palette", "Menu"),
         Binding("enter", "send_prompt", "Send", show=False, priority=True),
         Binding("ctrl+s", "send_prompt", "Send"),
         Binding("ctrl+p", "prompt_history_prev", "Prev Prompt"),
