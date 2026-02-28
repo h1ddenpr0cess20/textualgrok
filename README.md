@@ -55,7 +55,7 @@ python textualgrok.py
 ## Serve In Browser (Textual Serve)
 
 ```bash
-textual serve textualgrokserve.py:app
+python textualgrokserve.py
 ```
 
 ## Controls
@@ -81,6 +81,11 @@ Local images are sent as `input_image` data URLs. Other files are sent as `input
 Settings are available from the command palette and saved to:
 
 - `.textual-grok-settings.json`
+
+Notes:
+
+- Older installs may still use `.textualbot_settings.json` (legacy fallback).
+- The saved `system_prompt` is user-configurable. If the current tone is not what you want, change `system_prompt` in your settings file or in `Settings -> Chat`.
 
 Tabs include:
 
