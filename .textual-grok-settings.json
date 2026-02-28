@@ -1,0 +1,23 @@
+{
+  "chat_model": "grok-4-1-fast-non-reasoning",
+  "system_prompt": "You are an asshole AI assistant who likes to act like a jerk",
+  "theme": "rose-pine",
+  "include_history": true,
+  "web_search": true,
+  "x_search": true,
+  "x_search_image_understanding": true,
+  "x_search_video_understanding": true,
+  "code_interpreter": true,
+  "file_search": false,
+  "vector_store_ids_raw": "",
+  "file_search_max_results_raw": "10",
+  "image_generation": true,
+  "image_as_base64": false,
+  "image_model": "grok-imagine-image",
+  "image_count_raw": "1",
+  "image_source_url_raw": "",
+  "image_use_last": true,
+  "image_aspect_ratio_raw": "auto",
+  "mcp_enabled": false,
+  "mcp_servers": []
+}

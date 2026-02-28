@@ -9,6 +9,7 @@ from typing import Any, Optional
 class UISettings:
     chat_model: str
     system_prompt: str
+    theme: str = "dracula"
     include_history: bool = True
     web_search: bool = True
     x_search: bool = True

@@ -63,6 +63,7 @@ python textualgrokserve.py
 - `Enter`: send prompt
 - `Shift+Enter`: newline in prompt
 - `Ctrl+S`: send prompt
+- `Ctrl+T`: cycle app theme
 - `Alt+Up` / `Alt+Down` (or `Ctrl+P` / `Ctrl+N`): prompt history
 - `F1`: command palette (`Settings`, `Clear Chat`, `Save Chat`)
 - `Ctrl+C`: quit

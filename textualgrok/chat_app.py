@@ -8,11 +8,13 @@ import mimetypes
 import re
 import tempfile
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
+from pygments.styles import get_style_by_name
+from pygments.util import ClassNotFound
 from textual import events, on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
@@ -57,14 +59,13 @@ class ChatApp(App[None]):
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
-        Binding("f1", "command_palette", "Menu"),
         Binding("enter", "send_prompt", "Send", show=False, priority=True),
         Binding("ctrl+s", "send_prompt", "Send"),
-        Binding("ctrl+p", "prompt_history_prev", "Prev Prompt"),
-        Binding("ctrl+n", "prompt_history_next", "Next Prompt"),
-        Binding("alt+up", "prompt_history_prev", "Prev Prompt"),
-        Binding("alt+down", "prompt_history_next", "Next Prompt"),
+        Binding("ctrl+t", "cycle_theme", "Cycle Theme", priority=True),
+        Binding("ctrl+up", "prompt_history_prev", "Prev Prompt"),
+        Binding("ctrl+down", "prompt_history_next", "Next Prompt"),
     ]
+    DEFAULT_THEME_NAME = "dracula"
 
     def __init__(self, config: AppConfig) -> None:
         super().__init__()
@@ -86,6 +87,7 @@ class ChatApp(App[None]):
         self._temp_image_paths: list[Path] = []
         self._gallery_open = False
         self._transcript_lines: list[str] = []
+        self._chat_log_entries: list[dict[str, Any]] = []
         self._prompt_history: list[str] = []
         self._prompt_history_index: Optional[int] = None
         self._prompt_history_draft: str = ""
@@ -123,11 +125,26 @@ class ChatApp(App[None]):
 
     # Lifecycle
     def on_mount(self) -> None:
+        self.theme_changed_signal.subscribe(self, self._on_theme_changed)
+        theme_name = self.settings.theme.strip() if isinstance(self.settings.theme, str) else ""
+        if not theme_name:
+            theme_name = self.DEFAULT_THEME_NAME
+        self._set_theme(theme_name)
         self.query_one("#prompt", TextArea).focus()
         self._update_image_grid_columns()
         self._refresh_pending_attachments_ui()
 
+    def watch_theme(self, theme_name: str) -> None:
+        self._persist_theme(theme_name)
+
+    def _on_theme_changed(self, theme: object) -> None:
+        theme_name = getattr(theme, "name", None)
+        if isinstance(theme_name, str):
+            self._persist_theme(theme_name)
+            self._rerender_chat_log()
+
     def on_unmount(self) -> None:
+        self._persist_theme(self.theme)
         self._cleanup_temp_images()
         self.client.close()
 
@@ -158,6 +175,7 @@ class ChatApp(App[None]):
         self.conversation.clear_history()
         self.query_one(RichLog).clear()
         self._transcript_lines.clear()
+        self._chat_log_entries.clear()
         self.last_image_url = None
         self._pending_attachments.clear()
         self._session_images.clear()
@@ -280,6 +298,21 @@ class ChatApp(App[None]):
 
         self._prompt_history_index = None
         self._set_prompt_text(self._prompt_history_draft)
+
+    def action_cycle_theme(self) -> None:
+        theme_names = list(self.available_themes.keys())
+        if not theme_names:
+            return
+
+        current_theme = self.theme if isinstance(self.theme, str) else ""
+        try:
+            current_index = theme_names.index(current_theme)
+        except ValueError:
+            current_index = -1
+
+        next_theme = theme_names[(current_index + 1) % len(theme_names)]
+        self._set_theme(next_theme)
+        self._set_status(f"Theme: {next_theme}")
 
     # Prompt handling
     def _submit_prompt_from_ui(self) -> None:
@@ -693,19 +726,76 @@ class ChatApp(App[None]):
         prefix = "You:"
         if attachment_count > 0:
             prefix = f"You (+{attachment_count} attachment{'s' if attachment_count != 1 else ''}):"
-        self.query_one(RichLog).write(Text(f"{prefix} {prompt}"))
+        entry: dict[str, Any] = {
+            "kind": "user",
+            "message": prompt,
+            "attachment_count": attachment_count,
+        }
+        self._chat_log_entries.append(entry)
+        self._write_chat_log_entry(entry)
         self._transcript_lines.append(f"{prefix} {prompt}")
 
     def _log_assistant(self, message: str) -> None:
-        self.query_one(RichLog).write(Group(Text("Grok:"), Markdown(message)))
+        entry: dict[str, Any] = {"kind": "assistant", "message": message}
+        self._chat_log_entries.append(entry)
+        self._write_chat_log_entry(entry)
         self._transcript_lines.append(f"Grok:\\n{message}")
 
     def _log_error(self, message: str) -> None:
-        self.query_one(RichLog).write(Text(f"Error: {message}", style="bold red"))
+        entry: dict[str, Any] = {"kind": "error", "message": message}
+        self._chat_log_entries.append(entry)
+        self._write_chat_log_entry(entry)
         self._transcript_lines.append(f"Error: {message}")
 
     def _set_status(self, message: str) -> None:
         self.query_one("#status", Static).update(message)
+
+    def _write_chat_log_entry(self, entry: dict[str, Any]) -> None:
+        kind = entry.get("kind")
+        message = str(entry.get("message", ""))
+        chat_log = self.query_one(RichLog)
+
+        if kind == "assistant":
+            chat_log.write(Group(Text("Grok:"), self._render_markdown(message)))
+            return
+        if kind == "error":
+            chat_log.write(Text(f"Error: {message}", style="bold red"))
+            return
+
+        attachment_count = entry.get("attachment_count", 0)
+        prefix = "You:"
+        if isinstance(attachment_count, int) and attachment_count > 0:
+            prefix = f"You (+{attachment_count} attachment{'s' if attachment_count != 1 else ''}):"
+        chat_log.write(Text(f"{prefix} {message}"))
+
+    def _rerender_chat_log(self) -> None:
+        chat_log = self.query_one(RichLog)
+        chat_log.clear()
+        for entry in self._chat_log_entries:
+            self._write_chat_log_entry(entry)
+
+    def _render_markdown(self, message: str) -> Markdown:
+        code_theme = self._code_theme_for_current_theme()
+        try:
+            return Markdown(message, code_theme=code_theme)
+        except Exception:
+            return Markdown(message)
+
+    def _code_theme_for_current_theme(self) -> str:
+        theme_name = self.theme.strip() if isinstance(self.theme, str) else ""
+        if self._is_valid_code_theme(theme_name):
+            return theme_name
+        return "ansi_dark" if self.current_theme.dark else "ansi_light"
+
+    @staticmethod
+    def _is_valid_code_theme(style_name: str) -> bool:
+        if not style_name:
+            return False
+        try:
+            get_style_by_name(style_name)
+        except ClassNotFound:
+            return False
+        return True
 
     # Settings persistence
     @staticmethod
@@ -764,6 +854,25 @@ class ChatApp(App[None]):
             path.write_text(json.dumps(settings.__dict__, indent=2), encoding="utf-8")
         except OSError:
             self._set_status("Warning: failed to persist settings to disk.")
+
+    def _set_theme(self, theme_name: str) -> None:
+        try:
+            self.theme = theme_name
+        except Exception:
+            self.theme = self.DEFAULT_THEME_NAME
+
+    def _persist_theme(self, theme_name: object) -> None:
+        if not hasattr(self, "settings"):
+            return
+        if not isinstance(theme_name, str):
+            return
+        normalized_theme = theme_name.strip()
+        if not normalized_theme:
+            return
+        if self.settings.theme == normalized_theme:
+            return
+        self.settings.theme = normalized_theme
+        self._save_ui_settings(self.settings)
 
     # Misc helpers
     @staticmethod
