@@ -157,12 +157,6 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
                             id="select-image-aspect-ratio",
                             classes="settings-input",
                         )
-                        yield Label("Source Image URL (optional, for edits)")
-                        yield Input(
-                            value=self.initial.image_source_url_raw,
-                            id="input-image-source-url",
-                            classes="settings-input",
-                        )
 
                 with TabPane("MCP"):
                     with VerticalScroll(id="mcp-scroll", classes="settings-tab-scroll"):
@@ -322,29 +316,48 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
             if not isinstance(models, list) or not models:
                 self.query_one("#models-status", Static).update("No models returned by server.")
                 return
-            self._set_model_options(models)
-            self.query_one("#models-status", Static).update(
-                f"Loaded {len(models)} model(s) from server."
-            )
+            chat_count, image_count = self._set_model_options(models)
+            status_parts = [f"Loaded {len(models)} model(s) from server."]
+            if chat_count == 0:
+                status_parts.append("No non-grok-imagine models were returned for chat.")
+            if image_count == 0:
+                status_parts.append("No grok-imagine models were returned for image generation.")
+            self.query_one("#models-status", Static).update(" ".join(status_parts))
         else:
             self.query_one("#models-status", Static).update(f"Model list load failed: {event.worker.error}")
 
-    def _set_model_options(self, models: list[str]) -> None:
-        select_map = {
-            "#select-chat-model": self.initial.chat_model,
-            "#input-image-model": self.initial.image_model,
-        }
+    @staticmethod
+    def _is_imagine_model(model: str) -> bool:
+        return model.casefold().startswith("grok-imagine")
+
+    def _set_model_options(self, models: list[str]) -> tuple[int, int]:
+        chat_models = [model for model in models if not self._is_imagine_model(model)]
+        image_models = [model for model in models if self._is_imagine_model(model)]
+
+        self._set_filtered_model_options("#select-chat-model", chat_models, self.initial.chat_model)
+        self._set_filtered_model_options("#input-image-model", image_models, self.initial.image_model)
+
+        return len(chat_models), len(image_models)
+
+    def _set_filtered_model_options(
+        self,
+        selector: str,
+        models: list[str],
+        fallback_default: str,
+    ) -> None:
+        if not models:
+            return
+
+        select = self.query_one(selector, Select)
+        current_value = select.value
+        fallback = current_value if isinstance(current_value, str) and current_value else fallback_default
         options = [(model, model) for model in models]
 
-        for selector, fallback_default in select_map.items():
-            select = self.query_one(selector, Select)
-            current_value = select.value
-            fallback = current_value if isinstance(current_value, str) and current_value else fallback_default
-            select.set_options(options)
-            if fallback in models:
-                select.value = fallback
-            else:
-                select.value = models[0]
+        select.set_options(options)
+        if fallback in models:
+            select.value = fallback
+        else:
+            select.value = models[0]
 
     # MCP helpers
 
@@ -379,7 +392,7 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
             remove_button.disabled = False
             self.query_one("#mcp-status", Static).update(f"{len(options)} MCP server(s) configured.")
         else:
-            select.value = Select.BLANK
+            select.clear()
             remove_button.disabled = True
             self.query_one("#mcp-status", Static).update("No MCP servers configured.")
         self._sync_inputs()
@@ -556,7 +569,7 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
             image_as_base64=self.query_one("#switch-image-b64", Switch).value,
             image_model=image_model,
             image_count_raw=self.query_one("#input-image-count", Input).value,
-            image_source_url_raw=self.query_one("#input-image-source-url", Input).value,
+            image_source_url_raw="",
             image_use_last=self.query_one("#switch-image-use-last", Switch).value,
             image_aspect_ratio_raw=image_aspect_ratio,
             mcp_enabled=self.query_one("#switch-mcp-enabled", Switch).value,
@@ -582,7 +595,6 @@ class SettingsScreen(ModalScreen[Optional[UISettings]]):
         self.query_one("#switch-image-use-last", Switch).disabled = not image_generation_enabled
         self.query_one("#input-image-model", Select).disabled = not image_generation_enabled
         self.query_one("#input-image-count", Input).disabled = not image_generation_enabled
-        self.query_one("#input-image-source-url", Input).disabled = not image_generation_enabled
         self.query_one("#select-image-aspect-ratio", Select).disabled = not image_generation_enabled
 
         self.query_one("#input-mcp-label", Input).disabled = False
