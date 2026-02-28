@@ -18,7 +18,7 @@ from pygments.util import ClassNotFound
 from textual import events, on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
-from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
 from textual.worker import Worker, WorkerState
 
@@ -98,9 +98,8 @@ class ChatApp(App[None]):
             yield RichLog(id="chat-log", auto_scroll=True, wrap=False, highlight=False, markup=False)
             with Vertical(id="image-panel", classes="hidden"):
                 yield Static("Session Images", id="image-panel-title")
-                with VerticalScroll(id="image-grid-scroll"):
-                    with Vertical(id="image-grid"):
-                        yield Static("No images generated yet.", classes="image-grid-empty")
+                with HorizontalScroll(id="image-grid"):
+                    yield Static("No images generated yet.", classes="image-grid-empty")
             yield Static("Ready. Press F1 for menu.", id="status")
         with Horizontal(id="attachments-bar"):
             yield Static("Attachments: none", id="attachments-status")
@@ -131,7 +130,6 @@ class ChatApp(App[None]):
             theme_name = self.DEFAULT_THEME_NAME
         self._set_theme(theme_name)
         self.query_one("#prompt", TextArea).focus()
-        self._update_image_grid_columns()
         self._refresh_pending_attachments_ui()
 
     def watch_theme(self, theme_name: str) -> None:
@@ -147,9 +145,6 @@ class ChatApp(App[None]):
         self._persist_theme(self.theme)
         self._cleanup_temp_images()
         self.client.close()
-
-    def on_resize(self, event: events.Resize) -> None:
-        self._update_image_grid_columns(event.size.width)
 
     # Commands / palette
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:  # type: ignore[override]
@@ -264,6 +259,18 @@ class ChatApp(App[None]):
         if not isinstance(index, int):
             return
         self._open_image_gallery(index)
+
+    @on(events.MouseScrollDown, "#image-grid")
+    def on_image_grid_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        grid = self.query_one("#image-grid", HorizontalScroll)
+        grid.scroll_relative(x=8, y=0, animate=False)
+        event.stop()
+
+    @on(events.MouseScrollUp, "#image-grid")
+    def on_image_grid_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        grid = self.query_one("#image-grid", HorizontalScroll)
+        grid.scroll_relative(x=-8, y=0, animate=False)
+        event.stop()
 
     def action_send_prompt(self) -> None:
         if isinstance(self.screen, BrowseAttachmentFileScreen):
@@ -615,8 +622,7 @@ class ChatApp(App[None]):
 
     def _refresh_image_grid(self) -> None:
         panel = self.query_one("#image-panel", Vertical)
-        grid = self.query_one("#image-grid", Vertical)
-        self._update_image_grid_columns()
+        grid = self.query_one("#image-grid", HorizontalScroll)
 
         grid.remove_children()
 
@@ -640,26 +646,6 @@ class ChatApp(App[None]):
             tile = Vertical(thumb, caption, open_button, classes="image-tile")
             setattr(tile, "_image_index", index)
             grid.mount(tile)
-
-    def _update_image_grid_columns(self, width: Optional[int] = None) -> None:
-        try:
-            grid = self.query_one("#image-grid", Vertical)
-        except Exception:  # noqa: BLE001
-            return
-
-        if width is None:
-            width = self.size.width
-
-        if width < 90:
-            columns = 1
-        elif width < 140:
-            columns = 2
-        elif width < 190:
-            columns = 3
-        else:
-            columns = 4
-
-        grid.styles.grid_size_columns = columns
 
     def _resolve_image_index_from_click(self, event: events.Click) -> Optional[int]:
         candidates: list = []
@@ -907,4 +893,3 @@ class ChatApp(App[None]):
     @staticmethod
     def is_likely_image_url(url: str) -> bool:
         return is_likely_image_url(url)
-

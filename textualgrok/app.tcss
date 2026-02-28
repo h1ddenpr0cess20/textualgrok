@@ -193,8 +193,9 @@ ImageGalleryScreen {
 }
 
 #gallery-image {
-    width: auto;
-    height: 1fr;
+    width: 100%;
+    height: auto;
+    content-align: center middle;
     overflow-x: hidden;
     overflow-y: hidden;
 }
@@ -234,7 +235,7 @@ HeaderIcon {
 }
 
 #chat-log {
-    height: 2fr;
+    height: 1fr;
     border: round $accent;
     padding: 1;
     overflow-x: auto;
@@ -242,10 +243,11 @@ HeaderIcon {
 }
 
 #image-panel {
-    height: 1fr;
+    height: auto;
     border: round $secondary;
     margin-top: 1;
     padding: 1;
+    overflow-y: hidden;
 }
 
 #image-panel.hidden {
@@ -257,30 +259,32 @@ HeaderIcon {
     margin-bottom: 1;
 }
 
-#image-grid-scroll {
-    height: 1fr;
-}
-
 #image-grid {
-    layout: grid;
-    grid-size: 1;
-    grid-gutter: 1 1;
+    width: 100%;
+    layout: horizontal;
     height: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
 }
 
 .image-tile {
     border: round $secondary;
     padding: 0 1;
     height: auto;
+    width: 34;
+    min-width: 34;
+    margin-right: 1;
+    align: center top;
 }
 
 .image-thumb {
     width: auto;
     height: 6;
+    content-align: center middle;
 }
 
 .image-caption {
-    height: auto;
+    height: 2;
     margin-top: 1;
     color: $text-muted;
 }
