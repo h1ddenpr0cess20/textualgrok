@@ -17,8 +17,6 @@
   "image_source_url_raw": "",
   "image_use_last": true,
   "image_aspect_ratio_raw": "auto",
-  "mcp_enabled": true,
-  "mcp_servers": [
-    
-  ]
+  "mcp_enabled": false,
+  "mcp_servers": []
 }
