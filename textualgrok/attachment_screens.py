@@ -12,8 +12,8 @@ from textual.widgets import Button, Input, Label, OptionList, Select, Static
 
 from textual_image.widget import Image as TextualImageWidget
 
-from textualbot_app.attachments import is_likely_image_file, is_supported_attachment_file
-from textualbot_app.ui_types import BrowseEntry
+from textualgrok.attachments import is_likely_image_file, is_supported_attachment_file
+from textualgrok.ui_types import BrowseEntry
 
 
 class BrowseOptionList(OptionList):

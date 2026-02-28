@@ -1,4 +1,4 @@
-from textualbot_app.models import ChatMessage
+from textualgrok.models import ChatMessage
 
 
 class ConversationState:

@@ -1,4 +1,4 @@
-# Textual xAI Chatbot
+# Textual Grok
 
 Terminal-first chatbot built with [Textual](https://textual.textualize.io/) and xAI's Responses API (`/v1/responses`) using direct `httpx` calls.
 
@@ -9,7 +9,7 @@ Terminal-first chatbot built with [Textual](https://textual.textualize.io/) and 
 - Tool toggles: `web_search`, `x_search`, `code_interpreter`, `file_search`, and remote `mcp`.
 - File and image attachments (single files, folders, or image URLs).
 - Optional image generation/editing via Grok Imagine (`/v1/images/generations`).
-- Saved UI settings in `.textualbot_settings.json`.
+- Saved UI settings in `.textual-grok-settings.json`.
 - Chat transcript and generated image export to `exports/`.
 
 ## Requirements
@@ -49,13 +49,13 @@ XAI_IMAGE_MODEL=grok-imagine-image
 ## Run
 
 ```bash
-python textualbot.py
+python textualgrok.py
 ```
 
 ## Serve In Browser (Textual Serve)
 
 ```bash
-textual serve textualbot_serve.py:app
+textual serve textualgrokserve.py:app
 ```
 
 ## Controls
@@ -80,7 +80,7 @@ Local images are sent as `input_image` data URLs. Other files are sent as `input
 
 Settings are available from the command palette and saved to:
 
-- `.textualbot_settings.json`
+- `.textual-grok-settings.json`
 
 Tabs include:
 
@@ -97,12 +97,12 @@ Tabs include:
 
 ## Project Layout
 
-- `textualbot.py`: local terminal entrypoint
-- `textualbot_serve.py`: browser serve entrypoint
-- `textualbot_app/chat_app.py`: main Textual app
-- `textualbot_app/settings_screen.py`: settings modal UI
-- `textualbot_app/options.py`: tool option validation/building
-- `textualbot_app/xai_client.py`: xAI HTTP client
-- `textualbot_app/attachments.py`: attachment file-type support logic
-- `textualbot_app/conversation.py`: conversation state/history assembly
-- `textualbot_app/config.py`: environment config loader
+- `textualgrok.py`: local terminal entrypoint
+- `textualgrokserve.py`: browser serve entrypoint
+- `textualgrok/chat_app.py`: main Textual app
+- `textualgrok/settings_screen.py`: settings modal UI
+- `textualgrok/options.py`: tool option validation/building
+- `textualgrok/xai_client.py`: xAI HTTP client
+- `textualgrok/attachments.py`: attachment file-type support logic
+- `textualgrok/conversation.py`: conversation state/history assembly
+- `textualgrok/config.py`: environment config loader

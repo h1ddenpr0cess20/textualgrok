@@ -3,8 +3,8 @@ import json
 import re
 import time
 
-from textualbot_app.models import ChatMessage, ChatResult
-from textualbot_app.options import RequestOptions
+from textualgrok.models import ChatMessage, ChatResult
+from textualgrok.options import RequestOptions
 
 
 class XAIResponsesClient:

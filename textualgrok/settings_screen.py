@@ -13,9 +13,9 @@ from textual.widgets import Button, Input, Label, Select, Static, Switch, TabPan
 from textual.widgets.select import InvalidSelectValueError
 from textual.worker import Worker, WorkerState
 
-from textualbot_app.options import build_request_options
-from textualbot_app.ui_types import UISettings
-from textualbot_app.xai_client import XAIResponsesClient
+from textualgrok.options import build_request_options
+from textualgrok.ui_types import UISettings
+from textualgrok.xai_client import XAIResponsesClient
 
 
 class SettingsScreen(ModalScreen[Optional[UISettings]]):

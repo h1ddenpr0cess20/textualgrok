@@ -11,7 +11,7 @@ from textual.widgets import Button, Static
 
 from textual_image.widget import Image as TextualImageWidget
 
-from textualbot_app.ui_types import SessionImageItem
+from textualgrok.ui_types import SessionImageItem
 
 
 class ImageGalleryScreen(Screen[None]):

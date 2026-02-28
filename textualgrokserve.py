@@ -5,13 +5,13 @@ import sys
 
 from textual_serve.server import Server
 
-from textualbot_app.app import ChatApp
-from textualbot_app.config import AppConfig
+from textualgrok.app import ChatApp
+from textualgrok.config import AppConfig
 
 
 app = ChatApp(AppConfig.from_env())
 
-_app_path = Path(__file__).with_name("textualbot.py").resolve()
+_app_path = Path(__file__).with_name("textualgrok.py").resolve()
 server = Server(f'"{sys.executable}" "{_app_path}"')
 
 

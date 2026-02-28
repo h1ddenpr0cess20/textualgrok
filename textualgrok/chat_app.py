@@ -22,8 +22,8 @@ from textual.worker import Worker, WorkerState
 
 from textual_image.widget import Image as TextualImageWidget
 
-from textualbot_app.attachment_screens import AddAttachmentScreen, BrowseAttachmentFileScreen
-from textualbot_app.attachments import (
+from textualgrok.attachment_screens import AddAttachmentScreen, BrowseAttachmentFileScreen
+from textualgrok.attachments import (
     SUPPORTED_ATTACHMENT_EXTENSIONS,
     SUPPORTED_ATTACHMENT_FILENAMES,
     SUPPORTED_ATTACHMENT_MIME_TYPES,
@@ -33,19 +33,19 @@ from textualbot_app.attachments import (
     is_likely_image_url,
     is_supported_attachment_file,
 )
-from textualbot_app.command_provider import OrderedSystemCommandsProvider
-from textualbot_app.config import AppConfig
-from textualbot_app.conversation import ConversationState
-from textualbot_app.image_gallery_screen import ImageGalleryScreen
-from textualbot_app.models import ChatMessage, ChatResult
-from textualbot_app.options import RequestOptions, build_request_options
-from textualbot_app.settings_screen import SettingsScreen
-from textualbot_app.ui_types import PendingAttachment, SessionImageItem, UISettings
-from textualbot_app.xai_client import XAIResponsesClient
+from textualgrok.command_provider import OrderedSystemCommandsProvider
+from textualgrok.config import AppConfig
+from textualgrok.conversation import ConversationState
+from textualgrok.image_gallery_screen import ImageGalleryScreen
+from textualgrok.models import ChatMessage, ChatResult
+from textualgrok.options import RequestOptions, build_request_options
+from textualgrok.settings_screen import SettingsScreen
+from textualgrok.ui_types import PendingAttachment, SessionImageItem, UISettings
+from textualgrok.xai_client import XAIResponsesClient
 
 
 class ChatApp(App[None]):
-    TITLE = "xAI Textual Chatbot"
+    TITLE = "Textual Grok"
     CSS_PATH = "app.tcss"
     COMMANDS = {OrderedSystemCommandsProvider}
     # Expose constants for compatibility with previous class attributes.
@@ -710,12 +710,20 @@ class ChatApp(App[None]):
     # Settings persistence
     @staticmethod
     def _settings_file_path() -> Path:
+        return Path.cwd() / ".textual-grok-settings.json"
+
+    @staticmethod
+    def _legacy_settings_file_path() -> Path:
         return Path.cwd() / ".textualbot_settings.json"
 
     def _load_ui_settings(self, default: UISettings) -> UISettings:
         path = self._settings_file_path()
         if not path.exists():
-            return default
+            legacy_path = self._legacy_settings_file_path()
+            if legacy_path.exists():
+                path = legacy_path
+            else:
+                return default
 
         try:
             data = path.read_text(encoding="utf-8")

@@ -1,5 +1,5 @@
-from textualbot_app.app import ChatApp
-from textualbot_app.config import AppConfig
+from textualgrok.app import ChatApp
+from textualgrok.config import AppConfig
 
 
 def main() -> None:
