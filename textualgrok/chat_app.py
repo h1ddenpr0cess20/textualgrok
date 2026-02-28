@@ -115,7 +115,7 @@ class ChatApp(App[None]):
                 show_line_numbers=False,
                 placeholder=(
                     "Ask Grok something... "
-                    "(Enter send, Shift+Enter newline, Ctrl+S send, Alt+Up/Down history)"
+                    "(Enter send, Shift+Enter newline, Ctrl+S send, Ctrl+Up/Down history)"
                 ),
                 id="prompt",
             )
