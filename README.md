@@ -1,114 +1,55 @@
-# Textual Grok
+# TextualGrok
 
-Terminal-first chatbot built with [Textual](https://textual.textualize.io/) and xAI's Responses API (`/v1/responses`) using direct `httpx` calls.
+A terminal-first chatbot UI built with [Textual](https://textual.textualize.io/) that connects to [xAI's Responses API](https://docs.x.ai/api) — with tool use, file attachments, image generation, and MCP server support.
 
-## What It Supports
+TextualGrok runs as a full-screen TUI in your terminal. It supports web search, X search, code interpreter, file search, and remote MCP tools. You can attach local files and folders or image URLs to your messages, generate and edit images with Grok Imagine, and export transcripts and images to disk.
 
-- Chat with xAI models from a Textual UI.
-- Live model refresh from xAI (`/v1/models`) inside Settings.
-- Tool toggles: `web_search`, `x_search`, `code_interpreter`, `file_search`, and remote `mcp`.
-- File and image attachments (single files, folders, or image URLs).
-- Optional image generation/editing via Grok Imagine (`/v1/images/generations`).
-- Saved UI settings in `.textual-grok-settings.json`.
-- Chat transcript and generated image export to `exports/`.
+## Table of Contents
 
-## Requirements
+- [Quick Start](#quick-start)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
 
-- Python `3.10+`
-- xAI API key
+## Quick Start
 
-## Install
+Requires Python 3.10+ and an [xAI API key](https://x.ai).
 
-### Windows (PowerShell)
-
-```powershell
-python -m venv .venv
-. .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-```
-
-### macOS / Linux (bash/zsh)
+**macOS / Linux**
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```dotenv
-XAI_API_KEY=your_key_here
-XAI_MODEL=grok-4-1-fast-non-reasoning
-XAI_SYSTEM_PROMPT=You are a concise, helpful assistant.
-XAI_IMAGE_MODEL=grok-imagine-image
-```
-
-## Run
-
-```bash
+cp .env.example .env          # then set XAI_API_KEY in .env
 python textualgrok.py
 ```
 
-## Serve In Browser (Textual Serve)
+**Windows (PowerShell)**
 
-```bash
-python textualgrokserve.py
+```powershell
+python -m venv .venv; . .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env   # then set XAI_API_KEY in .env
+python textualgrok.py
 ```
 
-## Controls
+## Documentation
 
-- `Enter`: send prompt
-- `Shift+Enter`: newline in prompt
-- `Ctrl+S`: send prompt
-- `Ctrl+T`: cycle app theme
-- `Ctrl+Up` / `Ctrl+Down`: prompt history
-- `Ctrl+P`: command palette (`Settings`, `Clear Chat`, `Save Chat`)
-- `Ctrl+C`: quit
+Full documentation lives in the [docs/](docs/) folder:
 
-## Attachments
+- [docs/index.md](docs/index.md) — documentation home and table of contents
+- [docs/getting-started.md](docs/getting-started.md) — installation, setup, and first run
+- [docs/usage.md](docs/usage.md) — UI controls, keybindings, attachments, settings, exports
+- [docs/tools.md](docs/tools.md) — web search, X search, code interpreter, file search, MCP
+- [docs/image-generation.md](docs/image-generation.md) — Grok Imagine, settings, grok:render tags
+- [docs/configuration.md](docs/configuration.md) — environment variables, settings file reference
+- [docs/architecture.md](docs/architecture.md) — module map, data flow, extension points
+- [docs/contributing.md](docs/contributing.md) — dev setup, coding conventions, testing
 
-- Local files and folders are supported.
-- URL attachments are supported for images only.
-- Supported image types: `.jpg`, `.jpeg`, `.png`.
-- Supported document/code types include common text, markdown, JSON/YAML/XML, CSV/TSV, PDF, Office docs, and many code extensions.
+## Contributing
 
-Local images are sent as `input_image` data URLs. Other files are sent as `input_file` data URLs with filename metadata.
+Contributions are welcome. See [docs/contributing.md](docs/contributing.md) for setup instructions, coding conventions, and pull request guidelines.
 
-## Settings
+## License
 
-Settings are available from the command palette and saved to:
-
-- `.textual-grok-settings.json`
-
-Notes:
-
-- Older installs may still use `.textualbot_settings.json` (legacy fallback).
-- The saved `system_prompt` is user-configurable. If the current tone is not what you want, change `system_prompt` in your settings file or in `Settings -> Chat`.
-
-Tabs include:
-
-- `Chat`: model, system prompt, history mode
-- `Tools`: web/x/code/file toggles
-- `File Search`: vector store IDs and max results
-- `Image`: image model/count/format/aspect ratio/edit source
-- `MCP`: enable and configure remote MCP servers
-
-## Exports
-
-- `Save Chat` writes markdown transcripts to `exports/chat-YYYYMMDD-HHMMSS.md`.
-- Saved images are written under `exports/images/`.
-
-## Project Layout
-
-- `textualgrok.py`: local terminal entrypoint
-- `textualgrokserve.py`: browser serve entrypoint
-- `textualgrok/chat_app.py`: main Textual app
-- `textualgrok/settings_screen.py`: settings modal UI
-- `textualgrok/options.py`: tool option validation/building
-- `textualgrok/xai_client.py`: xAI HTTP client
-- `textualgrok/attachments.py`: attachment file-type support logic
-- `textualgrok/conversation.py`: conversation state/history assembly
-- `textualgrok/config.py`: environment config loader
+See [LICENSE](LICENSE).
